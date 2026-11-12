@@ -1,0 +1,88 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "omnirag"
+version = "0.1.0"
+description = "Multi-modal RAG knowledge assistant built from scratch (no LangChain, no LlamaIndex)."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Manas Thakur" }]
+requires-python = ">=3.10"
+keywords = ["rag", "retrieval", "bm25", "embeddings", "multimodal", "llm", "search"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Text Processing :: Indexing",
+]
+dependencies = [
+    "numpy>=1.24",
+    "httpx>=0.25",
+    "typer>=0.12",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+server = ["fastapi>=0.110", "uvicorn>=0.27"]
+pdf = ["pypdf>=4.0"]
+images = ["pillow>=10.0"]
+audio = ["faster-whisper>=1.0"]
+embeddings = ["sentence-transformers>=2.6"]
+all = ["omnirag[server,pdf,images,audio,embeddings]"]
+
+[project.scripts]
+omnirag = "omnirag.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Manas-thakur/omnirag"
+Repository = "https://github.com/Manas-thakur/omnirag"
+Issues = "https://github.com/Manas-thakur/omnirag/issues"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/omnirag"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/omnirag", "tests", "examples", "README.md", "LICENSE", "pyproject.toml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+filterwarnings = [
+    # Newer Starlette versions nudge TestClient users towards a different HTTP client.
+    "ignore:Using .httpx. with .starlette.testclient.",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+extend-exclude = ["plans", "examples/corpus"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+ignore = [
+    "E501",   # long lines are handled by the formatter where possible
+    "B008",   # typer uses function calls in argument defaults
+    "SIM905", # whitespace-split word lists are easier to read than list literals
+    "RUF001", # allow unicode punctuation in strings
+    "RUF002",
+    "RUF003",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["omnirag"]

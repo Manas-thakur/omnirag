@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>On-call Runbook</title>
+  <style>body { font-family: sans-serif; }</style>
+</head>
+<body>
+  <h1>On-call Runbook</h1>
+  <p>This runbook covers the most common alerts for the Notes platform.</p>
+
+  <h2>High p95 latency</h2>
+  <p>If the p95 latency of the Notes API stays above 250 ms for ten minutes, check the
+     Redis cache hit rate first. A cold or evicted cache sends every read to PostgreSQL.
+     Scaling the API replicas rarely helps when the database is the bottleneck.</p>
+
+  <h2>Spike in HTTP 429 responses</h2>
+  <p>A sudden increase in 429 responses usually means a single client exceeded its
+     rate limit. Look up the API key in the gateway logs before raising any limits.</p>
+
+  <h2>Database failover</h2>
+  <ul>
+    <li>Promote the eu-west read replica only after confirming the primary is down.</li>
+    <li>Update the <code>DATABASE_URL</code> secret and restart the API pods.</li>
+    <li>Announce the incident in the #notes-incidents channel.</li>
+  </ul>
+  <script>console.log("ignored by the ingestor");</script>
+</body>
+</html>

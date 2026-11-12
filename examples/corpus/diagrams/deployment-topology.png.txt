@@ -1,0 +1,2 @@
+Deployment topology diagram
+Two Kubernetes regions, us-east and eu-west. Each region runs three Notes API replicas behind a regional load balancer and its own Redis cache. The PostgreSQL primary lives in us-east and streams to a read replica in eu-west, which is promoted during a database failover.

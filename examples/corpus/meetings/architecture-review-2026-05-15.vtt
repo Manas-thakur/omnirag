@@ -1,0 +1,33 @@
+WEBVTT - Architecture Review Meeting 2026-05-15
+
+1
+00:00:05.000 --> 00:00:14.000
+<v Priya>Thanks everyone. Today we need to decide on the database migration plan and the Redis cache rollout.
+
+2
+00:00:15.000 --> 00:00:29.000
+<v Marco>For the migration I propose a two-phase approach. Phase one adds the new tables next to the old ones, phase two migrates the data and drops the old tables.
+
+3
+00:00:30.000 --> 00:00:41.000
+<v Aisha>We should keep a compatibility layer for thirty days after the migration so older clients keep working.
+
+4
+00:00:42.000 --> 00:00:55.000
+<v Priya>Agreed. What is the rollback plan if phase two goes wrong?
+
+5
+00:00:56.000 --> 00:01:10.000
+<v Marco>We keep the old schema read-only until the end of phase two, so we can switch back within two hours.
+
+6
+00:01:12.000 --> 00:01:26.000
+<v Aisha>On caching: the benchmark shows the Redis cache cut p95 latency for note reads from about 212 milliseconds to 38 milliseconds in us-east.
+
+7
+00:01:27.000 --> 00:01:40.000
+<v Priya>Great. Decision: we roll out the Redis cache to both regions next sprint, and the migration starts the sprint after.
+
+8
+00:01:41.000 --> 00:01:52.000
+<v Marco>I will also move the rate limiter buckets to Redis so limits are shared across gateway replicas.

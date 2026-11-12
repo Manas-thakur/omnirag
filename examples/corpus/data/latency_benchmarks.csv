@@ -1,0 +1,9 @@
+date,endpoint,region,cache,p50_ms,p95_ms,p99_ms,requests_per_s
+2026-04-01,GET /notes/{id},us-east,disabled,48,212,390,820
+2026-04-01,GET /notes/{id},eu-west,disabled,61,248,455,640
+2026-04-01,POST /notes,us-east,disabled,72,260,480,210
+2026-04-01,POST /auth/token,us-east,disabled,95,310,520,90
+2026-05-20,GET /notes/{id},us-east,redis,9,38,95,2450
+2026-05-20,GET /notes/{id},eu-west,redis,14,52,130,1980
+2026-05-20,POST /notes,us-east,redis,70,251,470,215
+2026-05-20,POST /auth/token,us-east,redis,93,305,515,92
