@@ -104,7 +104,25 @@ def test_extractive_answer_without_sources_or_matches():
     assert "could not find" in ExtractiveAnswerer().answer("x", [])
     _, tracker = ContextAssembler().assemble(CHUNKS[:1])
     text = ExtractiveAnswerer().answer("zebra giraffe", list(tracker.sources.values()))
-    assert "closest match" in text and "[1]" in text
+    assert "couldn't find" in text and "closest match" in text and "[1]" in text
+    # The unrelated chunk's content must not be presented as an answer.
+    assert CHUNKS[0].chunk.content[:40] not in text
+
+
+def test_extractive_summary_uses_named_document_in_order():
+    from omnirag.generate.extractive import is_summary_question
+
+    assert is_summary_question("Summarise the auth docs")
+    assert is_summary_question("What does latency.csv contain?")
+    assert not is_summary_question("When do access tokens expire?")
+    _, tracker = ContextAssembler().assemble(CHUNKS)
+    sources = list(tracker.sources.values())
+    focus = sources[0]
+    name = str(focus.metadata.get("path") or focus.label)
+    text = ExtractiveAnswerer().answer(f"Summarise {name}", sources)
+    lines = [ln for ln in text.splitlines() if ln.startswith("- ")]
+    assert len(lines) >= 2
+    assert all(f"[{focus.index}]" in ln for ln in lines)
 
 
 class FakeLLM(LLM):

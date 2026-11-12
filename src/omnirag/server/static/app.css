@@ -345,6 +345,12 @@ svg .fill { fill: currentColor; stroke: none; }
 .source-chip .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
 .source-chip .loc { color: var(--color-muted); font-size: var(--text-xs); white-space: nowrap; }
 .source-chip:not(.cited) { opacity: 0.78; }
+.more-sources { margin-top: var(--space-2); }
+.more-sources > summary { cursor: pointer; width: fit-content; color: var(--color-muted); font-size: var(--text-xs); }
+.more-sources > summary:hover { color: var(--color-ink); }
+.more-sources .answer-sources { margin-top: var(--space-2); }
+.foot-hint { color: var(--color-muted); text-decoration: underline; text-decoration-color: var(--color-rule-strong); text-underline-offset: 3px; }
+.foot-hint:hover { color: var(--color-accent-text); }
 
 .mdot { width: 8px; height: 8px; border-radius: 2px; flex: none; background: var(--color-muted); }
 .mdot[data-m="text"] { background: var(--color-m-text); }

@@ -92,15 +92,65 @@ def _code_excerpt(src: Source, max_lines: int = 18) -> str | None:
     return f"```{lang}\n" + "\n".join(lines) + "\n```"
 
 
+_SUMMARY_RE = re.compile(
+    r"\b(summari[sz]e|summary|overview|outline|describe|tl;?dr|tell me about|"
+    r"what (?:does|do|is in) .+ (?:contain|show|cover|say|describe)|what is in)\b",
+    re.IGNORECASE,
+)
+
+
+def is_summary_question(question: str) -> bool:
+    """True for questions asking to summarise or describe a source as a whole."""
+    return bool(_SUMMARY_RE.search(question))
+
+
+def _doc_key(src: Source) -> str:
+    return str(src.metadata.get("path") or src.label)
+
+
+def _focus_document(question: str, sources: list[Source]) -> str:
+    """Pick the document the question names (by path, file name or heading)."""
+    q_terms = set(terms(question))
+    best_key, best_score = _doc_key(sources[0]), 0.0
+    for rank, src in enumerate(sources):
+        name_terms = set(terms(f"{_doc_key(src)} {src.metadata.get('heading', '')} {src.label}"))
+        score = len(q_terms & name_terms) - rank * 0.01
+        if score > best_score:
+            best_key, best_score = _doc_key(src), score
+    return best_key
+
+
 class ExtractiveAnswerer:
     def __init__(self, max_sentences: int = 6, per_source: int = 2, max_chars: int = 320) -> None:
         self.max_sentences = max_sentences
         self.per_source = per_source
         self.max_chars = max_chars
 
+    def summarize(self, question: str, sources: list[Source]) -> str | None:
+        """Lead sentences of the document the question is about, in reading order."""
+        focus = _focus_document(question, sources)
+        lines: list[str] = []
+        seen: set[str] = set()
+        for src in sources:
+            if _doc_key(src) != focus:
+                continue
+            for sent in _candidate_sentences(src):
+                key = sent.lower()
+                if len(terms(sent)) < 3 or key in seen:
+                    continue
+                seen.add(key)
+                lines.append(f"- {truncate(sent, self.max_chars)} [{src.index}]")
+                if len(lines) >= self.max_sentences:
+                    return "\n".join(lines)
+        return "\n".join(lines) if len(lines) >= 2 else None
+
     def answer(self, question: str, sources: list[Source], show_code: bool = True) -> str:
         if not sources:
             return "I could not find anything relevant in the knowledge base for that question."
+        if is_summary_question(question):
+            summary = self.summarize(question, sources)
+            if summary:
+                return summary
         q_terms = set(terms(question))
         scored: list[tuple[float, int, int, str]] = []
         for rank, src in enumerate(sources):
@@ -129,8 +179,10 @@ class ExtractiveAnswerer:
         if not picked:
             top = sources[0]
             return (
-                "No source matches the question closely. The closest match is "
-                f"{top.label}: {truncate(top.content, self.max_chars)} [{top.index}]"
+                "I couldn't find an answer to that in this knowledge base. "
+                f"The closest match is {top.label} [{top.index}], but it doesn't "
+                "mention what you asked about. Try rephrasing with terms from your "
+                "documents, or add sources that cover this topic."
             )
         picked.sort(key=lambda x: (x[0], x[1]))
         lines = []

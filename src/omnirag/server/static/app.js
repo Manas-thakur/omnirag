@@ -685,22 +685,30 @@ function renderAnswerInner(msg, index) {
   for (const w of msg.warnings || []) parts.push(`<div class="notice">${esc(w)}</div>`);
   if (msg.sources?.length) {
     const cited = new Set(msg.cited || []);
-    parts.push(
-      `<div class="answer-sources" aria-label="Sources">${msg.sources
-        .map(
-          (s) => `<button type="button" class="source-chip${cited.has(s.index) ? " cited" : ""}" data-cite="${s.index}" data-msg="${index}" title="${esc(s.source)}">
+    const chip = (s) => `<button type="button" class="source-chip${cited.has(s.index) ? " cited" : ""}" data-cite="${s.index}" data-msg="${index}" title="${esc(s.source)}">
             <span class="mdot" data-m="${esc(s.modality)}"></span><span class="n">${s.index}</span>
-            <span class="name">${esc(s.metadata?.path || s.label || s.title)}</span>${s.location ? `<span class="loc">${esc(s.location)}</span>` : ""}</button>`,
-        )
-        .join("")}</div>`,
+            <span class="name">${esc(s.metadata?.path || s.label || s.title)}</span>${s.location ? `<span class="loc">${esc(s.location)}</span>` : ""}</button>`;
+    // Once citations are known, lead with the sources the answer actually used
+    // and fold the rest of the retrieved set away so it doesn't read as evidence.
+    const settled = !msg.pending && cited.size > 0;
+    const primary = settled ? msg.sources.filter((s) => cited.has(s.index)) : msg.sources;
+    const rest = settled ? msg.sources.filter((s) => !cited.has(s.index)) : [];
+    parts.push(
+      `<div class="answer-sources" aria-label="Sources">${primary.map(chip).join("")}</div>` +
+        (rest.length
+          ? `<details class="more-sources"><summary>${plural(rest.length, "more retrieved source")}</summary>
+              <div class="answer-sources">${rest.map(chip).join("")}</div></details>`
+          : ""),
     );
   }
   if (!msg.pending && (msg.text || msg.error)) {
     const t = msg.timings || {};
     const meta = [msg.backend, t.total_ms ? `${(t.total_ms / 1000).toFixed(2)} s` : ""].filter(Boolean).join(" · ");
+    const offline = msg.backend === "extractive" && msg.text;
     parts.push(`<div class="answer-foot">
       ${msg.text ? `<button class="btn btn-ghost" type="button" data-copy="${index}">${icon("copy")}<span>Copy</span></button>` : ""}
       ${meta ? `<span class="meta">${esc(meta)}</span>` : ""}
+      ${offline ? `<a class="foot-hint" href="#/settings" title="Answers are quoted from your sources. Connect Ollama or an OpenAI-compatible model for written answers.">Quoted from sources · connect a model for written answers</a>` : ""}
     </div>`);
   }
   return parts.join("");
