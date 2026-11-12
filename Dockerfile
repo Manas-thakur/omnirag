@@ -3,6 +3,11 @@
 #   docker run --rm -p 8000:8000 -v omnirag-data:/data omnirag
 FROM python:3.12-slim
 
+LABEL org.opencontainers.image.title="OmniRAG" \
+      org.opencontainers.image.description="Multi-modal RAG knowledge assistant: API server and web UI" \
+      org.opencontainers.image.source="https://github.com/Manas-thakur/omnirag" \
+      org.opencontainers.image.licenses="MIT"
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \

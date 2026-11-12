@@ -76,9 +76,46 @@ def test_tokenize_splits_identifiers():
 
 def test_terms_stopwords_and_stemming():
     assert terms("How do the tokens work?") == ["token", "work"]
-    assert stem("policies") == "policy"
+    assert stem("policies") == stem("policy")
     assert stem("class") == "class"
     assert stem("status") == "status"
+
+
+@pytest.mark.parametrize(
+    "group",
+    [
+        ["expires", "expired", "expiry", "expiration", "expiring", "expire"],
+        ["rotate", "rotated", "rotation", "rotating"],
+        ["authenticate", "authentication", "authenticated"],
+        ["limit", "limits", "limiter", "limiting", "limited"],
+        ["connect", "connection", "connections", "connected"],
+        ["query", "queries"],
+        ["cache", "cached", "caching"],
+        ["run", "running", "runs"],
+    ],
+)
+def test_porter_style_stemmer_conflates_related_forms(group):
+    assert len({stem(word) for word in group}) == 1, {word: stem(word) for word in group}
+
+
+@pytest.mark.parametrize(
+    "word",
+    ["api", "http2", "v1", "s3", "status", "analysis", "class", "kudos", "naïve"],
+)
+def test_stemmer_leaves_short_mixed_and_protected_tokens(word):
+    assert stem(word) == word
+
+
+def test_stemmer_keeps_distinct_words_apart():
+    assert stem("rate") != stem("rotate")
+    assert stem("token") != stem("table")
+    assert stem("meeting") == stem("meetings") == "meet"
+
+
+def test_stemmed_terms_match_across_forms():
+    assert set(terms("When do refresh tokens expire?")) & set(
+        terms("Refresh tokens expired after the rotation")
+    ) >= {"refresh", "token", stem("expire")}
 
 
 def test_split_sentences():

@@ -78,3 +78,14 @@ def test_errors_exit_nonzero(tmp_path):
     assert result.exit_code == 1
     result = runner.invoke(app, ["--data-dir", home, "kb", "create", "bad name!"])
     assert result.exit_code == 1
+
+
+def test_version_is_consistent():
+    import re
+    from pathlib import Path
+
+    from omnirag import __version__
+
+    pyproject = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+    assert re.search(r'^version = "([^"]+)"', pyproject, re.M).group(1) == __version__
+    assert __version__ in run("--version")

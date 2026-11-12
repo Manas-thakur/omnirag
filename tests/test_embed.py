@@ -77,7 +77,7 @@ def test_embedding_cache_roundtrip(tmp_path):
     assert len(cache) == 3
     cache.close()
     reopened = EmbeddingCache(tmp_path / "cache.sqlite")
-    assert len(reopened.get_many(spy.name, ["alpha", "gamma", "missing"])) == 2
+    assert len(reopened.get_many(spy.cache_namespace, ["alpha", "gamma", "missing"])) == 2
     reopened.clear()
     assert len(reopened) == 0
     reopened.close()

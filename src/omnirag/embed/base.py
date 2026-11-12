@@ -32,6 +32,11 @@ class Embedder(ABC):
     name: str = "embedder"
 
     @property
+    def cache_namespace(self) -> str:
+        """Key under which vectors are cached; change it when outputs change."""
+        return self.name
+
+    @property
     @abstractmethod
     def dimension(self) -> int: ...
 

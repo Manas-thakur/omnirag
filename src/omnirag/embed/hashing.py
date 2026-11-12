@@ -23,7 +23,7 @@ from itertools import pairwise
 import numpy as np
 
 from omnirag.embed.base import Embedder, l2_normalize
-from omnirag.textutil import terms
+from omnirag.textutil import TEXT_VERSION, terms
 
 UNIGRAM_WEIGHT = 1.0
 BIGRAM_WEIGHT = 0.6
@@ -59,6 +59,11 @@ class HashingEmbedder(Embedder):
             raise ValueError("dimension must be >= 16")
         self._dimension = dimension
         self.name = f"hashing:{dimension}"
+
+    @property
+    def cache_namespace(self) -> str:
+        # Vectors depend on tokenisation/stemming, so cached ones are versioned.
+        return f"{self.name}:t{TEXT_VERSION}"
 
     @property
     def dimension(self) -> int:

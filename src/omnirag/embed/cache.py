@@ -79,6 +79,7 @@ class CachedEmbedder(Embedder):
         self.inner = inner
         self.cache = cache
         self.name = inner.name
+        self.namespace = inner.cache_namespace
 
     @property
     def dimension(self) -> int:
@@ -87,11 +88,11 @@ class CachedEmbedder(Embedder):
     def embed_documents(self, texts: list[str]) -> np.ndarray:
         if not texts:
             return self.inner.embed_documents(texts)
-        cached = self.cache.get_many(self.name, texts)
+        cached = self.cache.get_many(self.namespace, texts)
         missing = [i for i in range(len(texts)) if i not in cached]
         if missing:
             fresh = self.inner.embed_documents([texts[i] for i in missing])
-            self.cache.put_many(self.name, [texts[i] for i in missing], fresh)
+            self.cache.put_many(self.namespace, [texts[i] for i in missing], fresh)
             for j, i in enumerate(missing):
                 cached[i] = fresh[j]
         return np.stack([cached[i] for i in range(len(texts))]).astype(np.float32)

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "omnirag"
-version = "0.1.0"
+version = "0.2.0"
 description = "Multi-modal RAG knowledge assistant built from scratch (no LangChain, no LlamaIndex)."
 readme = "README.md"
 license = "MIT"
@@ -13,7 +13,7 @@ authors = [{ name = "Manas Thakur" }]
 requires-python = ">=3.10"
 keywords = ["rag", "retrieval", "bm25", "embeddings", "multimodal", "llm", "search"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
@@ -32,7 +32,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-server = ["fastapi>=0.110", "uvicorn>=0.27"]
+server = [
+    "fastapi>=0.110",
+    "python-multipart>=0.0.9",
+    "uvicorn>=0.27",
+]
 pdf = ["pypdf>=4.0"]
 images = ["pillow>=10.0"]
 audio = ["faster-whisper>=1.0"]
@@ -57,7 +61,7 @@ dev = [
 packages = ["src/omnirag"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/omnirag", "tests", "examples", "README.md", "LICENSE", "pyproject.toml"]
+include = ["src/omnirag", "tests", "examples", "README.md", "CHANGELOG.md", "LICENSE", "pyproject.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -9,6 +9,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -399,6 +400,37 @@ def stats(kb_name: str = KB_OPTION, as_json: bool = typer.Option(False, "--json"
         console.print(
             f"[dim]{len(docs)} document(s); first: {', '.join(Path(d.source).name for d in docs[:8])}[/]"
         )
+
+
+# ----------------------------------------------------------------------- doctor
+@app.command()
+def doctor(
+    network: bool = typer.Option(
+        True, "--network/--no-network", help="Probe Ollama / OpenAI-compatible endpoints."
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Print the checks as JSON."),
+) -> None:
+    """Check Python, the data dir, the embedder, model servers and optional extras."""
+    from omnirag.doctor import FAIL, run_checks
+
+    checks = run_checks(Settings.from_env(), home=state.home, network=network)
+    failed = [c for c in checks if c.status == FAIL]
+    if as_json:
+        print(json.dumps([c.to_dict() for c in checks], indent=2))
+    else:
+        styles = {"ok": "green", "warn": "yellow", "fail": "bold red", "info": "dim"}
+        table = Table(show_header=False, box=None, padding=(0, 1))
+        table.add_column("status")
+        table.add_column("check", style="bold")
+        table.add_column("detail")
+        for c in checks:
+            table.add_row(f"[{styles[c.status]}]{c.status:>4}[/]", escape(c.name), escape(c.detail))
+        console.print(table)
+        console.print(
+            f"[bold red]{len(failed)} problem(s) found[/]" if failed else "[green]All good.[/]"
+        )
+    if failed:
+        raise typer.Exit(1)
 
 
 # ------------------------------------------------------------------------ serve

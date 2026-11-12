@@ -45,6 +45,10 @@ class Settings:
     request_timeout: float = 120.0
     chunk_size: int = 1200
     chunk_overlap: int = 150
+    # HTTP server
+    api_key: str | None = None
+    cors_origins: tuple[str, ...] = ()
+    max_upload_mb: float = 50.0
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -64,6 +68,13 @@ class Settings:
             request_timeout=float(_env("OMNIRAG_TIMEOUT", "120") or 120),
             chunk_size=int(_env("OMNIRAG_CHUNK_SIZE", "1200") or 1200),
             chunk_overlap=int(_env("OMNIRAG_CHUNK_OVERLAP", "150") or 150),
+            api_key=_env("OMNIRAG_API_KEY"),
+            cors_origins=tuple(
+                o.strip().rstrip("/")
+                for o in (_env("OMNIRAG_CORS_ORIGINS", "") or "").split(",")
+                if o.strip()
+            ),
+            max_upload_mb=float(_env("OMNIRAG_MAX_UPLOAD_MB", "50") or 50),
         )
 
     def with_overrides(self, **kwargs: object) -> Settings:

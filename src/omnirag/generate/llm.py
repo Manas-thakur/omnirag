@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 
 import httpx
 
@@ -20,6 +22,12 @@ class LLM(ABC):
     def complete(
         self, messages: list[dict[str, str]], temperature: float = 0.1, max_tokens: int = 800
     ) -> str: ...
+
+    def stream(
+        self, messages: list[dict[str, str]], temperature: float = 0.1, max_tokens: int = 800
+    ) -> Iterator[str]:
+        """Yield the answer in pieces. Backends without streaming yield it whole."""
+        yield self.complete(messages, temperature=temperature, max_tokens=max_tokens)
 
 
 class OllamaLLM(LLM):
@@ -54,6 +62,30 @@ class OllamaLLM(LLM):
         if content is None:
             raise LLMError("Ollama returned no message content")
         return str(content).strip()
+
+    def stream(self, messages, temperature=0.1, max_tokens=800) -> Iterator[str]:
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "stream": True,
+            "options": {"temperature": temperature, "num_predict": max_tokens},
+        }
+        try:
+            with self._client.stream("POST", f"{self.host}/api/chat", json=payload) as resp:
+                resp.raise_for_status()
+                for line in resp.iter_lines():
+                    if not line.strip():
+                        continue
+                    data = json.loads(line)
+                    if data.get("error"):
+                        raise LLMError(f"Ollama error: {data['error']}")
+                    piece = (data.get("message") or {}).get("content") or ""
+                    if piece:
+                        yield piece
+                    if data.get("done"):
+                        break
+        except (httpx.HTTPError, ValueError) as exc:
+            raise LLMError(f"Ollama request to {self.host} failed: {exc}") from exc
 
 
 class OpenAICompatibleLLM(LLM):
@@ -90,6 +122,36 @@ class OpenAICompatibleLLM(LLM):
             resp.raise_for_status()
             data = resp.json()
             return str(data["choices"][0]["message"]["content"] or "").strip()
+        except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
+            raise LLMError(f"OpenAI-compatible request to {self.base_url} failed: {exc}") from exc
+
+    def stream(self, messages, temperature=0.1, max_tokens=800) -> Iterator[str]:
+        headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+        url = f"{self.base_url}/chat/completions"
+        try:
+            with self._client.stream("POST", url, json=payload, headers=headers) as resp:
+                resp.raise_for_status()
+                for line in resp.iter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    choices = json.loads(data).get("choices") or []
+                    if not choices:
+                        continue
+                    piece = (choices[0].get("delta") or {}).get("content") or ""
+                    if piece:
+                        yield piece
         except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
             raise LLMError(f"OpenAI-compatible request to {self.base_url} failed: {exc}") from exc
 

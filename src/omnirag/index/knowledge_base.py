@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -19,6 +19,7 @@ from omnirag.query.rewriter import QueryRewriter
 from omnirag.retrieve import HybridRetriever, RetrievalResult
 from omnirag.store import Chunk, Document, LocalStore, SearchFilters
 from omnirag.store.local import utcnow
+from omnirag.textutil import TEXT_VERSION
 
 # Bump when ingestion output changes in a way that should invalidate old chunks.
 INGEST_VERSION = "1"
@@ -35,6 +36,8 @@ class KBConfig:
     chunk_overlap: int = 150
     created_at: str = ""
     version: int = 1
+    # Tokeniser/stemmer version the stored vectors were built with (see textutil).
+    text_version: int = 1
 
     @classmethod
     def load(cls, path: Path) -> KBConfig:
@@ -44,6 +47,50 @@ class KBConfig:
 
     def save(self, path: Path) -> None:
         path.write_text(json.dumps(asdict(self), indent=2) + "\n", encoding="utf-8")
+
+
+LLM_BACKENDS = ("", "none", "ollama", "openai")
+
+
+@dataclass
+class KBPreferences:
+    """Per-knowledge-base answer settings, editable from the web UI.
+
+    ``llm`` is ``""`` (use the server default, ``OMNIRAG_LLM``), ``none``
+    (offline extractive answers), ``ollama`` or ``openai`` (any
+    OpenAI-compatible endpoint). Empty ``model``/``base_url`` fall back to the
+    environment configuration. API keys are never stored here.
+    """
+
+    llm: str = ""
+    model: str = ""
+    base_url: str = ""
+    top_k: int = 5
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> KBPreferences:
+        known = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
+        prefs = cls(**known)
+        prefs.validate()
+        return prefs
+
+    def validate(self) -> None:
+        self.llm = (self.llm or "").strip().lower()
+        if self.llm == "openai-compatible":
+            self.llm = "openai"
+        if self.llm not in LLM_BACKENDS:
+            raise ValueError(f"unknown LLM backend {self.llm!r} (use none, ollama or openai)")
+        self.model = (self.model or "").strip()
+        self.base_url = (self.base_url or "").strip().rstrip("/")
+        if self.base_url and not self.base_url.startswith(("http://", "https://")):
+            raise ValueError("base URL must start with http:// or https://")
+        if isinstance(self.top_k, bool) or not isinstance(self.top_k, int):
+            raise ValueError("top_k must be an integer between 1 and 50")
+        if not 1 <= self.top_k <= 50:
+            raise ValueError("top_k must be an integer between 1 and 50")
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass
@@ -128,6 +175,8 @@ class KnowledgeBase:
             raise FileNotFoundError(f"no knowledge base at {self.path}")
         self.config = KBConfig.load(config_path)
         self.store = LocalStore(self.path / "store.sqlite")
+        if self.config.text_version != TEXT_VERSION and not self.store.count_chunks():
+            self._mark_text_version()
         self._cache: EmbeddingCache | None = None
         self._embedder: Embedder | None = None
         self._retriever: HybridRetriever | None = None
@@ -135,6 +184,72 @@ class KnowledgeBase:
     @property
     def name(self) -> str:
         return self.config.name
+
+    @property
+    def uploads_dir(self) -> Path:
+        """Where files uploaded through the HTTP API are stored."""
+        return self.path / "uploads"
+
+    # ------------------------------------------------------------ preferences
+    @property
+    def preferences_path(self) -> Path:
+        return self.path / "settings.json"
+
+    @property
+    def preferences(self) -> KBPreferences:
+        try:
+            data = json.loads(self.preferences_path.read_text(encoding="utf-8"))
+            return KBPreferences.from_dict(data)
+        except (OSError, ValueError, TypeError):
+            return KBPreferences()
+
+    def save_preferences(self, prefs: KBPreferences) -> KBPreferences:
+        prefs.validate()
+        self.preferences_path.write_text(
+            json.dumps(prefs.to_dict(), indent=2) + "\n", encoding="utf-8"
+        )
+        return prefs
+
+    def llm_settings(self) -> tuple[str, Settings]:
+        """The LLM spec and settings implied by this KB's preferences."""
+        prefs = self.preferences
+        if not prefs.llm:
+            return self.settings.llm, self.settings
+        if prefs.llm == "none":
+            return "none", self.settings
+        spec = prefs.llm + (f":{prefs.model}" if prefs.model else "")
+        settings = self.settings
+        if prefs.base_url and prefs.llm == "ollama":
+            settings = settings.with_overrides(ollama_host=prefs.base_url)
+        elif prefs.base_url and prefs.llm == "openai":
+            settings = settings.with_overrides(openai_base_url=prefs.base_url)
+        return spec, settings
+
+    def default_llm(self) -> LLM | None:
+        """The LLM selected by this KB's preferences (``None`` = extractive)."""
+        spec, settings = self.llm_settings()
+        return create_llm(spec, settings)
+
+    # ---------------------------------------------------------- maintenance
+    def _mark_text_version(self) -> None:
+        self.config.text_version = TEXT_VERSION
+        self.config.save(self.path / "kb.json")
+
+    def ensure_current(self) -> bool:
+        """Re-embed stored chunks if they were built with an older tokeniser.
+
+        Only the hashing embedder depends on OmniRAG's own tokenisation; neural
+        embedders are unaffected, so for them only the version is updated.
+        Returns True when a rebuild happened.
+        """
+        if self.config.text_version == TEXT_VERSION:
+            return False
+        rebuilt = False
+        if self.config.embedder.startswith("hashing") and self.store.count_chunks():
+            self.rebuild()
+            rebuilt = True
+        self._mark_text_version()
+        return rebuilt
 
     # ------------------------------------------------------------ components
     @property
@@ -147,6 +262,7 @@ class KnowledgeBase:
         return self._embedder
 
     def retriever(self, llm: LLM | None = None) -> HybridRetriever:
+        self.ensure_current()
         if self._retriever is None:
             self._retriever = HybridRetriever(self.store, self.embedder)
         self._retriever.rewriter = QueryRewriter(llm)
@@ -159,14 +275,21 @@ class KnowledgeBase:
         recursive: bool = True,
         force: bool = False,
         progress: ProgressFn | None = None,
+        root: str | Path | None = None,
     ) -> IngestReport:
-        """Ingest files/directories. Unchanged files (same content hash) are skipped."""
+        """Ingest files/directories. Unchanged files (same content hash) are skipped.
+
+        ``root`` sets the base directory for the short display paths stored with
+        each chunk (by default the ingested directory or the files' common parent).
+        """
         started = time.perf_counter()
+        self.ensure_current()
         report = IngestReport()
         ctx = IngestContext(
             settings=self.settings,
             chunk_size=self.config.chunk_size,
             chunk_overlap=self.config.chunk_overlap,
+            root=Path(root) if root is not None else None,
         )
         pipeline = IngestionPipeline(ctx)
         files = pipeline.prepare(paths, recursive=recursive)
@@ -280,6 +403,11 @@ class KnowledgeBase:
             query, k=k, filters=filters, mode=mode, neighbors=neighbors
         )
 
+    def _resolve_llm(self, llm: str | LLM | None) -> LLM | None:
+        if isinstance(llm, LLM) or llm is None:
+            return llm
+        return create_llm(llm, self.settings)
+
     def ask(
         self,
         question: str,
@@ -292,7 +420,7 @@ class KnowledgeBase:
     ) -> Answer:
         """Retrieve relevant chunks and answer with citations."""
         started = time.perf_counter()
-        model = llm if isinstance(llm, LLM) or llm is None else create_llm(llm, self.settings)
+        model = self._resolve_llm(llm)
         retrieved = self.retriever(model).retrieve(
             question, k=k, filters=filters, mode=mode, neighbors=neighbors, use_hyde=hyde
         )
@@ -300,25 +428,46 @@ class KnowledgeBase:
         answer = AnswerGenerator(model).generate(
             retrieved.query.text or question, retrieved.results
         )
-        answer.question = question
-        answer.timings["retrieve_ms"] = round(retrieve_ms, 1)
-        answer.timings["total_ms"] = round((time.perf_counter() - started) * 1000, 1)
-        parsed = retrieved.query
-        answer.query = {
-            "text": parsed.text,
-            "intent": parsed.intent.value,
-            "modality_hints": [m.value for m in parsed.modality_hints],
-            "filters": {
-                "modalities": [m.value for m in (retrieved.plan.filters.modalities or [])],
-                "exclude_modalities": [
-                    m.value for m in (retrieved.plan.filters.exclude_modalities or [])
-                ],
-                "sources": retrieved.plan.filters.sources or [],
-                "metadata": retrieved.plan.filters.metadata,
-            },
-            "mode": mode,
-        }
+        _finish_answer(answer, question, retrieved, mode, started, retrieve_ms)
         return answer
+
+    def ask_stream(
+        self,
+        question: str,
+        llm: str | LLM | None = "none",
+        k: int = 5,
+        filters: SearchFilters | None = None,
+        mode: str = "hybrid",
+        neighbors: int = 1,
+        hyde: bool = False,
+    ) -> Iterator[tuple[str, Any]]:
+        """Like :meth:`ask`, but yields events while the answer is produced.
+
+        Events: ``("sources", {"sources": [...], "query": {...}, "retrieve_ms": ...})``,
+        then ``("delta", str)`` pieces of text, then ``("answer", Answer)``.
+        """
+        started = time.perf_counter()
+        model = self._resolve_llm(llm)
+        retrieved = self.retriever(model).retrieve(
+            question, k=k, filters=filters, mode=mode, neighbors=neighbors, use_hyde=hyde
+        )
+        retrieve_ms = (time.perf_counter() - started) * 1000
+        generator = AnswerGenerator(model)
+        for event, payload in generator.stream(retrieved.query.text or question, retrieved.results):
+            if event == "sources":
+                yield (
+                    "sources",
+                    {
+                        "sources": [src.to_dict() for src in payload],
+                        "query": _query_info(retrieved, mode),
+                        "retrieve_ms": round(retrieve_ms, 1),
+                    },
+                )
+            elif event == "answer":
+                _finish_answer(payload, question, retrieved, mode, started, retrieve_ms)
+                yield "answer", payload
+            else:
+                yield event, payload
 
     # ----------------------------------------------------------------- stats
     def stats(self) -> KBStats:
@@ -357,6 +506,37 @@ class KnowledgeBase:
         self.close()
 
 
+def _query_info(retrieved: RetrievalResult, mode: str) -> dict[str, Any]:
+    parsed = retrieved.query
+    filters = retrieved.plan.filters
+    return {
+        "text": parsed.text,
+        "intent": parsed.intent.value,
+        "modality_hints": [m.value for m in parsed.modality_hints],
+        "filters": {
+            "modalities": [m.value for m in (filters.modalities or [])],
+            "exclude_modalities": [m.value for m in (filters.exclude_modalities or [])],
+            "sources": filters.sources or [],
+            "metadata": filters.metadata,
+        },
+        "mode": mode,
+    }
+
+
+def _finish_answer(
+    answer: Answer,
+    question: str,
+    retrieved: RetrievalResult,
+    mode: str,
+    started: float,
+    retrieve_ms: float,
+) -> None:
+    answer.question = question
+    answer.timings["retrieve_ms"] = round(retrieve_ms, 1)
+    answer.timings["total_ms"] = round((time.perf_counter() - started) * 1000, 1)
+    answer.query = _query_info(retrieved, mode)
+
+
 def new_config(name: str, description: str, embedder: str, settings: Settings) -> KBConfig:
     return KBConfig(
         name=name,
@@ -365,4 +545,5 @@ def new_config(name: str, description: str, embedder: str, settings: Settings) -
         chunk_size=settings.chunk_size,
         chunk_overlap=settings.chunk_overlap,
         created_at=utcnow(),
+        text_version=TEXT_VERSION,
     )

@@ -3,6 +3,7 @@
 from omnirag.index.knowledge_base import (
     IngestReport,
     KBConfig,
+    KBPreferences,
     KBStats,
     KnowledgeBase,
     content_hash,
@@ -14,6 +15,7 @@ __all__ = [
     "IndexManager",
     "IngestReport",
     "KBConfig",
+    "KBPreferences",
     "KBStats",
     "KnowledgeBase",
     "KnowledgeBaseError",

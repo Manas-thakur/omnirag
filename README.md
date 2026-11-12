@@ -12,6 +12,39 @@ It runs **fully offline by default**: the default embedder, BM25 index, hybrid f
 and extractive answerer need nothing beyond `numpy`. Plug in Ollama or any OpenAI-compatible
 endpoint when you want an LLM to write the answer.
 
+## Features
+
+- **One index for every modality**: Markdown, HTML, PDF, 25+ programming languages, CSV/JSON
+  tables, images (captions, alt text, SVG/PNG/EXIF metadata) and meeting transcripts.
+- **Hybrid retrieval built from scratch**: dense vectors + BM25, reciprocal rank fusion, a
+  lexical reranker, MMR de-duplication and neighbouring-chunk context.
+- **Answers with checked citations**: every claim carries `[n]`; citations that point at
+  nothing are removed. Works offline (extractive) or with Ollama / any OpenAI-compatible LLM.
+- **Web app**: knowledge-base management, streaming chat with citation chips and a source
+  panel (highlighted chunk, images, code with line numbers), a document library with
+  drag-and-drop upload, per-knowledge-base model settings and a live status check. Light and
+  dark themes, works on a phone, no build step.
+- **API and CLI**: FastAPI server with server-sent-event streaming, upload, document and
+  settings endpoints; `omnirag` CLI for ingesting, querying and `omnirag doctor`.
+- **Safe to expose with care**: optional API key, opt-in CORS, upload size and type limits,
+  sanitised file names, strict Content Security Policy.
+- **Incremental and portable**: content-hashed re-ingestion, one SQLite file per knowledge
+  base, Docker image on ghcr.io.
+
+## Screenshots
+
+Chat with a streamed, cited answer and the source panel open (light theme):
+
+![Chat view with citations and the source preview panel](https://raw.githubusercontent.com/Manas-thakur/omnirag/main/docs/screenshots/chat.png)
+
+The library: upload, search, re-ingest and delete documents (dark theme):
+
+![Library view with the document table](https://raw.githubusercontent.com/Manas-thakur/omnirag/main/docs/screenshots/library.png)
+
+<img alt="Chat on a phone-sized screen" src="https://raw.githubusercontent.com/Manas-thakur/omnirag/main/docs/screenshots/mobile.png" width="300">
+
+The screenshots are captures of the bundled demo corpus with the offline extractive answerer.
+
 ## Philosophy
 
 Real knowledge doesn't come only as text:
@@ -83,8 +116,10 @@ src/omnirag/
 ├── retrieve/    BM25 (from scratch), RRF fusion, lexical reranker, MMR, hybrid retriever
 ├── generate/    context assembly, citation tracker, LLM clients, extractive answerer
 ├── index/       IndexManager, KnowledgeBase (ingest/search/ask/stats/rebuild/prune)
-├── server/      FastAPI app + single-file web UI (static/index.html)
+├── server/      FastAPI app, security middleware, no-build web UI (static/)
 ├── cli.py       `omnirag` command
+├── doctor.py    environment checks behind `omnirag doctor`
+├── health.py    Ollama / OpenAI-compatible reachability probes
 └── config.py    environment-based settings
 ```
 
@@ -93,12 +128,20 @@ src/omnirag/
 Requires Python 3.10+.
 
 ```bash
-# Core (CLI + offline pipeline)
+# From PyPI (once published, see "Releasing" below)
+pip install "omnirag[server,pdf,images]"
+
+# From GitHub
+pip install "omnirag[server,pdf,images] @ git+https://github.com/Manas-thakur/omnirag"
+
+# Core only (CLI + offline pipeline, no web server)
 pip install git+https://github.com/Manas-thakur/omnirag
 
-# With the web UI / API server, PDF and image metadata support
-pip install "omnirag[server,pdf,images] @ git+https://github.com/Manas-thakur/omnirag"
+# Docker
+docker run --rm -p 8000:8000 -v omnirag-data:/data ghcr.io/manas-thakur/omnirag:latest
 ```
+
+Check the environment at any time with `omnirag doctor`.
 
 ### Development setup (uv)
 
@@ -118,7 +161,7 @@ uv run omnirag --help
 
 | Extra        | Installs                | Enables                                                     |
 |--------------|-------------------------|-------------------------------------------------------------|
-| `server`     | fastapi, uvicorn        | `omnirag serve`: JSON API + web UI                          |
+| `server`     | fastapi, uvicorn, python-multipart | `omnirag serve`: JSON API + web UI + uploads     |
 | `pdf`        | pypdf                   | text extraction from PDFs (per-page chunks)                 |
 | `images`     | pillow                  | EXIF metadata and dimensions for JPEG/WebP/... images       |
 | `audio`      | faster-whisper          | local transcription of audio files without a transcript     |
@@ -126,6 +169,23 @@ uv run omnirag --help
 | `all`        | all of the above        |                                                             |
 
 ## Quick start
+
+The fastest path is the web app:
+
+```bash
+pip install "omnirag[server,pdf,images]"
+omnirag serve            # http://127.0.0.1:8000
+```
+
+1. Click **+** next to *Knowledge bases* and create one (for example `notes`).
+2. Open **Library** and drop files onto the page (or use *Choose files*). Each file shows its
+   upload progress and how many chunks were indexed.
+3. Open **Chat** and ask a question. The answer streams in; click a `[n]` chip to see the exact
+   chunk it came from.
+4. Optional: in **Settings**, switch the knowledge base to Ollama or an OpenAI-compatible
+   endpoint. The status card shows whether the endpoint is reachable.
+
+The same from the command line:
 
 ```bash
 omnirag kb create notes
@@ -141,6 +201,7 @@ PNG diagrams):
 
 ```bash
 uv run python examples/run_demo.py      # or: make demo
+make serve                              # web UI on the demo knowledge base
 ```
 
 ```
@@ -171,6 +232,7 @@ Global option: `--data-dir/-d PATH` (or `OMNIRAG_HOME`) selects where knowledge 
 | `omnirag search "TEXT" --kb NAME [-k 10] [-m MODALITY] [--mode ...] [--json]` | Retrieval only: ranked chunks with dense/BM25 ranks |
 | `omnirag stats --kb NAME [--json]` | Document/chunk counts by modality, embedder, storage |
 | `omnirag serve [--host 127.0.0.1] [--port 8000] [--kb NAME]` | Start the API server and web UI |
+| `omnirag doctor [--no-network] [--json]` | Check Python, the data dir, the embedder, Ollama / OpenAI reachability and installed extras; exits 1 on problems |
 
 ### Inline query filters
 
@@ -212,37 +274,98 @@ for hit in hits.results:
 kb.close()
 ```
 
-Bring your own LLM by subclassing `omnirag.generate.LLM` and passing the instance as `llm=`.
+Stream an answer as it is generated:
+
+```python
+for event, payload in kb.ask_stream("How are refresh tokens rotated?", llm="ollama"):
+    if event == "sources":
+        print(len(payload["sources"]), "sources")
+    elif event == "delta":
+        print(payload, end="", flush=True)
+    elif event == "answer":
+        print("\ncited:", payload.cited)
+```
+
+Bring your own LLM by subclassing `omnirag.generate.LLM` (implement `complete()`, and optionally
+`stream()`) and passing the instance as `llm=`.
 
 ## Web UI and HTTP API
 
-`omnirag serve` starts a FastAPI app with a single self-contained HTML/JS page (no build step, no
-Node toolchain): a chat view with modality filter chips, a knowledge base / LLM selector, and a
-source preview panel. Clicking a `[n]` citation shows the chunk, its neighbouring chunks, its
-metadata and, for images, the image itself.
+`omnirag serve` starts a FastAPI app that serves the API and a web app made of plain HTML, CSS
+and JavaScript (`src/omnirag/server/static/`): no Node toolchain, no build step and no CDN
+scripts, so it works offline.
+
+- **Sidebar**: knowledge bases (create, switch, delete with confirmation), the conversations
+  of the active knowledge base (kept in the browser's local storage) and a model status
+  indicator.
+- **Chat**: answers stream in over server-sent events and can be stopped. Markdown is rendered
+  by a small built-in renderer that escapes everything first, so model output cannot inject
+  HTML. `[n]` chips open the source panel: the cited chunk is highlighted together with its
+  neighbours, images are displayed, and code is shown with its real line numbers. Modality chips
+  limit the sources; inline filters such as `source:*.py` also work. Answers can be copied.
+- **Library**: drag-and-drop or file-picker upload into the active knowledge base with per-file
+  progress and results, and a searchable document table (name, type, chunks, size, ingested)
+  with re-ingest and delete.
+- **Settings**: LLM backend (server default, none, Ollama, OpenAI-compatible), model, base URL
+  and top-k, saved per knowledge base; the embedder in use and whether the model endpoint is
+  reachable; theme (system, light, dark); API key.
+- Keyboard: `/` focuses the question box, `Enter` sends, `Shift+Enter` adds a line, `Esc` stops
+  generation or closes the source panel and menus.
 
 > The original plan called for a TypeScript CLI and a React web UI. They were replaced by the
-> Python CLI and this no-build page to keep the project a single installable package.
+> Python CLI and this no-build app to keep the project a single installable package.
+
+### API reference
+
+All endpoints live under `/api`; interactive docs are at `/api/docs`. When `OMNIRAG_API_KEY`
+is set, send it as `X-API-Key: <key>` (or `Authorization: Bearer <key>`) on every request except
+`GET /api/health`.
 
 | Method & path | Purpose |
 |---------------|---------|
-| `GET /api/health` | liveness + version |
-| `GET /api/kbs` / `POST /api/kbs` | list / create knowledge bases |
+| `GET /api/health` | liveness, version, default KB, whether an API key is required |
+| `GET /api/status?kb=&probe=true` | embedder in use, configured LLM backend/model/URL, whether it is reachable (latency, listed models), upload limits |
+| `GET /api/kbs` / `POST /api/kbs` | list / create knowledge bases (`{"name", "description", "embedder"}`) |
+| `GET /api/kbs/{name}` / `DELETE /api/kbs/{name}` | knowledge base summary / delete it with its index, uploads and settings |
+| `GET /api/kbs/{name}/settings` / `PUT ...` | per-KB answer settings `{"llm": ""\|"none"\|"ollama"\|"openai", "model", "base_url", "top_k"}` |
 | `GET /api/kbs/{name}/stats`, `GET /api/stats?kb=` | statistics |
-| `GET /api/kbs/{name}/documents` | ingested documents |
+| `GET /api/kbs/{name}/documents` | documents with name, path, modality, chunks, size, timestamps, `uploaded`, `missing` |
+| `POST /api/kbs/{name}/upload` | multipart `files` (one or more); stored in the KB's `uploads/` folder and ingested; returns per-file status |
+| `DELETE /api/kbs/{name}/documents/{doc_id}` | remove a document (and its uploaded file, if it was uploaded) |
+| `POST /api/kbs/{name}/documents/{doc_id}/reingest` | re-parse and re-embed one document |
 | `POST /api/query` | `{"query", "kb", "top_k", "llm", "modalities", "sources", "mode", "neighbors"}` → answer, cited ids, sources, timings |
+| `POST /api/query/stream` | same body; `text/event-stream` with `sources`, `delta` (`{"text"}`) …, then `done` (the full answer) or `error` |
 | `POST /api/ingest` | `{"paths": [...], "kb", "recursive", "force"}` (paths on the server's filesystem) |
 | `GET /api/kbs/{name}/chunks/{chunk_id}?window=1` | chunk with neighbours (source preview) |
-| `GET /api/kbs/{name}/documents/{doc_id}/raw` | original file of an ingested document |
-| `GET /api/docs` | interactive OpenAPI docs |
+| `GET /api/kbs/{name}/documents/{doc_id}/raw` | original file of a registered document, served inert |
+
+`top_k` and `llm` may be omitted from queries; the knowledge base's saved settings are used.
 
 ```bash
 curl -s localhost:8000/api/query -H 'content-type: application/json' \
   -d '{"query": "How does authentication work?", "kb": "notes", "llm": "none"}'
+
+curl -N localhost:8000/api/query/stream -H 'content-type: application/json' \
+  -d '{"query": "How does authentication work?", "kb": "notes"}'
+
+curl -s localhost:8000/api/kbs/notes/upload -F files=@handbook.pdf -F files=@schema.sql
 ```
 
-The server is meant for local or trusted-network use: there is no authentication, and the ingest
-endpoint reads paths on the server.
+### Security
+
+The server binds to `127.0.0.1` by default and is meant for local or trusted networks. Before
+exposing it:
+
+- set `OMNIRAG_API_KEY` (the web app asks for the key once and keeps it in the browser);
+- leave CORS off unless another origin must call the API, then list it in
+  `OMNIRAG_CORS_ORIGINS`;
+- remember that `POST /api/ingest` reads paths on the server's filesystem (protected by the key
+  like every other endpoint), while uploads only ever write into the knowledge base directory.
+
+Uploads are limited by size (`OMNIRAG_MAX_UPLOAD_MB`) and to file types the ingestors support;
+file names are reduced to a safe basename. Raw source files are only served for registered
+documents (looked up by id, never by path) with a sandboxing Content Security Policy, and HTML
+or SVG content is never rendered as an active page.
 
 ## Configuration
 
@@ -261,9 +384,15 @@ endpoint reads paths on the server.
 | `OMNIRAG_WHISPER_MODEL` | `base` | faster-whisper model size (with the `audio` extra) |
 | `OMNIRAG_CHUNK_SIZE` / `OMNIRAG_CHUNK_OVERLAP` | `1200` / `150` | chunk size/overlap in characters for new KBs |
 | `OMNIRAG_TIMEOUT` | `120` | HTTP timeout (seconds) for model servers |
+| `OMNIRAG_API_KEY` | unset | require this key on `/api/*` (`X-API-Key` header or bearer token) |
+| `OMNIRAG_CORS_ORIGINS` | unset | comma-separated origins allowed to call the API from a browser (`*` for any) |
+| `OMNIRAG_MAX_UPLOAD_MB` | `50` | maximum size of one uploaded file |
 
 The embedder and chunking parameters are stored per knowledge base (`kb.json`), so queries always
 use the same embedding space as ingestion. Switch with `omnirag kb rebuild NAME --embedder SPEC`.
+Answer settings chosen in the web app (backend, model, base URL, top-k) are stored per knowledge
+base in `settings.json` and override `OMNIRAG_LLM` for that knowledge base; API keys are only
+read from the environment.
 
 If an LLM backend is unreachable, OmniRAG falls back to the extractive answerer and prints a
 warning instead of failing.
@@ -283,6 +412,9 @@ warning instead of failing.
 - **Incremental indexing.** Each document is keyed by its absolute path and a content hash
   (including sidecar captions). Re-ingesting skips unchanged files and atomically replaces
   changed ones. Embeddings are cached on disk by model and text hash.
+- **Text normalisation.** Tokens are lower-cased, CamelCase/snake_case identifiers are split,
+  stopwords dropped and words reduced by a light Porter-style stemmer, so `expires`, `expired`,
+  `expiry` and `expiration` all match. Short tokens and tokens with digits are left alone.
 - **Embeddings.** The default `HashingEmbedder` uses the hashing trick over word unigrams, bigrams
   and character 4-grams with sublinear TF and L2 normalisation: deterministic, offline, no
   downloads. Neural embedders are one flag away.
@@ -298,6 +430,9 @@ warning instead of failing.
 
 ## Docker
 
+Released images are published to `ghcr.io/manas-thakur/omnirag` (tags `latest`, `0.2.0`,
+`0.2`, for linux/amd64 and linux/arm64). To build locally:
+
 ```bash
 docker build -t omnirag .
 docker run --rm -p 8000:8000 -v omnirag-data:/data omnirag
@@ -308,7 +443,8 @@ docker run --rm -p 8000:8000 -v omnirag-data:/data -e OMNIRAG_KB=demo omnirag
 ```
 
 Use `-e OLLAMA_HOST=http://host.docker.internal:11434 -e OMNIRAG_LLM=ollama` to answer with an
-Ollama server running on the host.
+Ollama server running on the host, and `-e OMNIRAG_API_KEY=...` before publishing the port
+beyond your machine.
 
 ## Development
 
@@ -316,17 +452,52 @@ Ollama server running on the host.
 uv sync --extra server --extra pdf --extra images
 uv run pytest -q            # offline: no network, no model downloads
 uv run ruff check . && uv run ruff format --check .
+uv run omnirag doctor       # environment check
 make demo                   # ingest examples/corpus and run sample queries
 make serve                  # web UI on the demo knowledge base
 ```
 
+The web app is plain files in `src/omnirag/server/static/` (`index.html`, `app.css`,
+`app.js`, `markdown.js`); edit and reload, there is nothing to build.
+
 CI (`.github/workflows/ci.yml`) runs ruff and pytest on Python 3.10, 3.11 and 3.12 with uv, plus a
 CLI smoke test on the sample corpus.
+
+## Releasing
+
+`.github/workflows/release.yml` runs when a tag matching `v*` is pushed:
+
+1. **build**: checks that the tag matches the version in `pyproject.toml` and
+   `omnirag/__init__.py`, runs the tests, builds the sdist and wheel with `uv build` and
+   smoke-tests the wheel (`omnirag --version`, `omnirag doctor`).
+2. **github-release**: creates a GitHub Release for the tag with both files attached and the
+   matching section of `CHANGELOG.md` as release notes (tags containing `-`, such as
+   `v0.3.0-rc1`, are marked as pre-releases).
+3. **docker**: builds the image for linux/amd64 and linux/arm64 and pushes it to
+   `ghcr.io/manas-thakur/omnirag` with the `GITHUB_TOKEN` (no extra secrets).
+4. **pypi**: publishes the same files to PyPI with trusted publishing. It is skipped until the
+   repository variable `PYPI_PUBLISH` is set to `true`, so releases work before PyPI is set up.
+
+To cut a release:
+
+```bash
+# bump the version in pyproject.toml and src/omnirag/__init__.py, update CHANGELOG.md
+uv lock
+git commit -am "Release 0.2.0"
+git tag v0.2.0
+git push origin main v0.2.0
+```
+
+One-time PyPI setup: on PyPI add a *pending trusted publisher* for project `omnirag` with owner
+`Manas-thakur`, repository `omnirag`, workflow `release.yml` and environment `pypi`; create a
+GitHub environment named `pypi` (optionally with required reviewers); then set the repository
+variable `PYPI_PUBLISH=true`. After the first image push, make the ghcr.io package public in
+its package settings if it should be pullable without logging in.
 
 ## Roadmap
 
 The design documents in [`plans/`](plans/) describe a larger system. Implemented so far: the full
-offline pipeline above, the CLI, the API server and web UI, and the showcase corpus. Not done yet:
+offline pipeline above, the CLI, the API server and web app, and the showcase corpus. Not done yet:
 
 - **Ingest:** OCR for scanned PDFs/images (Surya), PDF embedded-image extraction, Hugging Face
   VLM captioners (only Ollama vision models are supported), URL/web ingestion, EPUB, Parquet and
@@ -339,9 +510,9 @@ offline pipeline above, the CLI, the API server and web UI, and the showcase cor
 - **Retrieve:** cross-encoder reranking (e.g. `bge-reranker`), retrieval evaluation metrics
   (recall@k, MRR, nDCG) and an eval job in CI.
 - **Generate:** multi-pass outline/draft/critique/revise generation, LLM-based citation
-  verification, streaming responses, tokenizer-accurate budgets.
-- **Interfaces:** `omnirag config set`, web UI pages for browsing documents and settings, and the
-  planned docs/blog site.
+  verification, tokenizer-accurate budgets.
+- **Interfaces:** `omnirag config set`, server-side conversation history shared across
+  devices, user accounts, and the planned docs/blog site.
 
 ## License
 
