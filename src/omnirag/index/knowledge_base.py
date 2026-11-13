@@ -10,9 +10,16 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from omnirag.config import Settings
-from omnirag.embed import CachedEmbedder, Embedder, EmbeddingCache, create_embedder, normalize_spec
+from omnirag.config import Settings, validate_chunking
+from omnirag.embed import (
+    CachedEmbedder,
+    Embedder,
+    EmbeddingCache,
+    create_embedder,
+    validate_spec,
+)
 from omnirag.generate import Answer, AnswerGenerator, create_llm
+from omnirag.generate.extractive import TermWeights
 from omnirag.generate.llm import LLM
 from omnirag.ingest import IngestContext, IngestError, IngestionPipeline
 from omnirag.query.rewriter import QueryRewriter
@@ -23,12 +30,14 @@ from omnirag.store.local import utcnow
 from omnirag.textutil import TEXT_VERSION
 
 # Bump when ingestion output changes in a way that should invalidate old chunks.
-INGEST_VERSION = "2"
+INGEST_VERSION = "3"
 # Version of everything the stored vectors depend on: tokenisation and the
 # contextual header chunks are indexed with.
 INDEX_VERSION = TEXT_VERSION * 100 + CONTEXT_VERSION
 
 ProgressFn = Callable[[str, Path, str], None]
+
+HYDE_NEEDS_LLM = "HyDE query expansion needs an LLM (--llm ollama or openai); it was skipped"
 
 
 @dataclass
@@ -104,6 +113,9 @@ class IngestReport:
     unchanged: list[str] = field(default_factory=list)
     failed: dict[str, str] = field(default_factory=dict)
     warnings: dict[str, list[str]] = field(default_factory=dict)
+    #: Paths that were not ingested and why (unsupported type, inside the
+    #: OmniRAG data directory, outside the folder through a link, ...).
+    skipped: dict[str, str] = field(default_factory=dict)
     chunks: int = 0
     seconds: float = 0.0
 
@@ -297,7 +309,13 @@ class KnowledgeBase:
             root=Path(root) if root is not None else None,
         )
         pipeline = IngestionPipeline(ctx)
-        files = pipeline.prepare(paths, recursive=recursive)
+        files = pipeline.prepare(
+            paths,
+            recursive=recursive,
+            exclude=[self.settings.home, self.path],
+            allow=[self.uploads_dir],
+            skipped=report.skipped,
+        )
         for path in files:
             source = str(path)
             try:
@@ -377,24 +395,40 @@ class KnowledgeBase:
         return removed
 
     def rebuild(self, embedder: str | None = None, progress: ProgressFn | None = None) -> int:
-        """Re-embed every chunk (e.g. after switching embedders). Returns chunk count."""
-        if embedder:
-            self.config.embedder = normalize_spec(embedder)
-            self.config.save(self.path / "kb.json")
-            self._embedder = None
-            self._retriever = None
+        """Re-embed every chunk (e.g. after switching embedders). Returns chunk count.
+
+        A new ``embedder`` is checked and every chunk embedded with it before
+        anything is saved: if the spec is invalid, its package is missing or the
+        model server fails, :class:`EmbeddingError` is raised and the knowledge
+        base keeps its current embedder and vectors.
+        """
+        spec = validate_spec(embedder) if embedder else None
+        if spec and spec != self.config.embedder:
+            # Built without touching the current embedder, so a knowledge base whose
+            # saved spec no longer works can still be switched to a working one.
+            if self._cache is None:
+                self._cache = EmbeddingCache(self.path / "embed_cache.sqlite")
+            target = CachedEmbedder(create_embedder(spec, self.settings), self._cache)
+        else:
+            target = self.embedder
         chunks = list(self.store.iter_chunks())
-        if not chunks:
-            return 0
         vectors: dict = {}
         batch = 256
         for i in range(0, len(chunks), batch):
             part = chunks[i : i + batch]
-            embedded = self.embedder.embed_documents(
-                [index_text(c.content, c.metadata) for c in part]
-            )
+            embedded = target.embed_documents([index_text(c.content, c.metadata) for c in part])
             for c, v in zip(part, embedded, strict=True):
                 vectors[c.chunk_id] = v
+        if spec and spec != self.config.embedder:
+            if not chunks:
+                # Nothing to re-embed: still prove the embedder works before saving it.
+                target.embed_query("embedder check")
+            self.config.embedder = spec
+            self.config.save(self.path / "kb.json")
+            self._embedder = target
+            self._retriever = None
+        if not vectors:
+            return 0
         dim = int(next(iter(vectors.values())).shape[0])
         self.store.update_embeddings(vectors, dim)
         return len(chunks)
@@ -411,6 +445,22 @@ class KnowledgeBase:
         return self.retriever().retrieve(
             query, k=k, filters=filters, mode=mode, neighbors=neighbors
         )
+
+    def _generator(self, model: LLM | None, retriever: HybridRetriever) -> AnswerGenerator:
+        index = retriever.bm25()
+        return AnswerGenerator(
+            model,
+            weights=TermWeights(index.idf, len(index)),
+            table_rows=self._table_rows,
+        )
+
+    def _table_rows(self, doc_id: str) -> list[str]:
+        """Every ``Row n: ...`` line of a table document (for "showing 5 of 54 rows")."""
+        rows: list[str] = []
+        for chunk in self.store.get_document_chunks(doc_id):
+            if chunk.metadata.get("kind") == "rows":
+                rows.extend(ln for ln in chunk.content.splitlines() if ln.startswith("Row "))
+        return rows
 
     def _resolve_llm(self, llm: str | LLM | None) -> LLM | None:
         if isinstance(llm, LLM) or llm is None:
@@ -430,14 +480,17 @@ class KnowledgeBase:
         """Retrieve relevant chunks and answer with citations."""
         started = time.perf_counter()
         model = self._resolve_llm(llm)
-        retrieved = self.retriever(model).retrieve(
+        retriever = self.retriever(model)
+        retrieved = retriever.retrieve(
             question, k=k, filters=filters, mode=mode, neighbors=neighbors, use_hyde=hyde
         )
         retrieve_ms = (time.perf_counter() - started) * 1000
-        answer = AnswerGenerator(model).generate(
+        answer = self._generator(model, retriever).generate(
             retrieved.query.text or question, retrieved.results
         )
         _finish_answer(answer, question, retrieved, mode, started, retrieve_ms)
+        if hyde and model is None:
+            answer.warnings.append(HYDE_NEEDS_LLM)
         return answer
 
     def ask_stream(
@@ -457,11 +510,12 @@ class KnowledgeBase:
         """
         started = time.perf_counter()
         model = self._resolve_llm(llm)
-        retrieved = self.retriever(model).retrieve(
+        retriever = self.retriever(model)
+        retrieved = retriever.retrieve(
             question, k=k, filters=filters, mode=mode, neighbors=neighbors, use_hyde=hyde
         )
         retrieve_ms = (time.perf_counter() - started) * 1000
-        generator = AnswerGenerator(model)
+        generator = self._generator(model, retriever)
         for event, payload in generator.stream(retrieved.query.text or question, retrieved.results):
             if event == "sources":
                 yield (
@@ -474,6 +528,8 @@ class KnowledgeBase:
                 )
             elif event == "answer":
                 _finish_answer(payload, question, retrieved, mode, started, retrieve_ms)
+                if hyde and model is None:
+                    payload.warnings.append(HYDE_NEEDS_LLM)
                 yield "answer", payload
             else:
                 yield event, payload
@@ -548,10 +604,16 @@ def _finish_answer(
 
 
 def new_config(name: str, description: str, embedder: str, settings: Settings) -> KBConfig:
+    """A configuration for a new knowledge base.
+
+    Raises :class:`EmbeddingError` for an invalid embedder spec and
+    :class:`~omnirag.config.ConfigError` for invalid chunking settings.
+    """
+    validate_chunking(settings.chunk_size, settings.chunk_overlap)
     return KBConfig(
         name=name,
         description=description,
-        embedder=normalize_spec(embedder),
+        embedder=validate_spec(embedder),
         chunk_size=settings.chunk_size,
         chunk_overlap=settings.chunk_overlap,
         created_at=utcnow(),

@@ -26,12 +26,26 @@ from omnirag import (
 ## Example
 
 ```python
+from pathlib import Path
+
 from omnirag import IndexManager, Modality, SearchFilters
+
+# A small folder to index: a Markdown page and a CSV table.
+docs = Path("omnirag-example")
+docs.mkdir(exist_ok=True)
+(docs / "auth.md").write_text(
+    "# Authentication\n\n## Refreshing tokens\n\n"
+    "Refresh tokens are rotated: each refresh invalidates the previous one.\n",
+    encoding="utf-8",
+)
+(docs / "latency.csv").write_text(
+    "endpoint,cache,p95_ms\nGET /notes,disabled,212\nGET /notes,redis,38\n", encoding="utf-8"
+)
 
 manager = IndexManager()  # uses $OMNIRAG_HOME or ~/.omnirag
 kb = manager.get_or_create("notes")
 
-report = kb.ingest(["./docs", "./src"])  # incremental: re-running skips unchanged files
+report = kb.ingest([docs])  # incremental: re-running skips unchanged files
 print(len(report.added), "added,", report.chunks, "chunks")
 
 answer = kb.ask("How are refresh tokens rotated?", llm="none", k=5)
@@ -54,18 +68,18 @@ kb.close()
 
 | Method                                              | Returns                                 |
 | --------------------------------------------------- | --------------------------------------- |
-| `create(name, description="", embedder=None)`       | a new `KnowledgeBase`                   |
+| `create(name, description="", embedder=None)`       | a new `KnowledgeBase`; raises `KnowledgeBaseError` for an invalid name or embedder spec |
 | `get(name)`                                         | an existing `KnowledgeBase`, or raises `KnowledgeBaseError` |
 | `get_or_create(name, **kwargs)`                     | either of the above                     |
 | `exists(name)`                                      | `bool`                                  |
 | `list()`                                            | the knowledge bases' configurations     |
-| `delete(name)`                                      | removes the knowledge base's directory  |
+| `delete(name)`                                      | closes knowledge bases this manager opened and removes the directory; raises `KnowledgeBaseError` if another process holds its files |
 
 ## `KnowledgeBase`
 
 | Method | Description |
 | ------ | ----------- |
-| `ingest(paths, recursive=True, force=False, progress=None, root=None)` | Ingest files and folders; returns an `IngestReport` with `added`, `updated`, `unchanged`, `failed`, `warnings`, `chunks` and `seconds` |
+| `ingest(paths, recursive=True, force=False, progress=None, root=None)` | Ingest files and folders; returns an `IngestReport` with `added`, `updated`, `unchanged`, `failed`, `warnings`, `skipped`, `chunks` and `seconds`. Files inside the data directory are never ingested and links out of a folder are not followed |
 | `search(query, k=5, filters=None, mode="hybrid", neighbors=1)` | Retrieval only; returns a result with `.results` (`ScoredChunk` objects with `chunk`, `score`, `retrieval`) and `.query` |
 | `ask(question, llm="none", k=5, filters=None, mode="hybrid", neighbors=1, hyde=False)` | Retrieve and answer; returns an `Answer` |
 | `ask_stream(question, ...)` | Same arguments; yields `("sources", dict)`, then `("delta", str)` pieces, then `("answer", Answer)` |
@@ -73,7 +87,7 @@ kb.close()
 | `documents()` | The `Document` records |
 | `remove(source)` | Remove one document by source path or id |
 | `prune()` | Remove documents whose source files no longer exist |
-| `rebuild(embedder=None)` | Re-embed every chunk, optionally switching embedder |
+| `rebuild(embedder=None)` | Re-embed every chunk, optionally switching embedder. A new embedder is checked and used for every chunk before it is saved; on failure `EmbeddingError` is raised and the old one stays |
 | `close()` | Close the database |
 
 `llm` accepts a backend spec string (`"none"`, `"ollama"`, `"ollama:qwen2.5:7b"`, `"openai"`,

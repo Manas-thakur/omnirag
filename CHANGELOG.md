@@ -6,6 +6,90 @@ All notable changes to OmniRAG are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Offline answers are held to a relevance floor.** The extractive answerer weighs question
+  words by how rare they are in the knowledge base (BM25 IDF; words it never contains weigh the
+  most) and answers "I couldn't find an answer" unless the quoted sentences cover at least half
+  of the question's weight. "What is the boiling point of water at sea level?" no longer gets
+  cited bullets about anomaly "points" and "levels"; the not-found reply names the closest
+  source without citing it.
+- Offline answers use section headings (a question about authentication prefers the
+  Authentication section), keep short sentences that answer strongly ("Lunch is at one pm."),
+  label table cells with their column names, prefer prose over image alt text (unless the
+  question asks for a picture), attach a code block only when the question is about code, and
+  say when a table listing is partial ("Showing 4 of 12 matching rows in orders.csv").
+- "What changed in X 0.3.0?" finds the changelog: change questions match changelog and release
+  notes pages, and a heading naming the version asked about ranks and answers first.
+- Sources in answers and `omnirag search` are listed in relevance order (MMR still picks a
+  diverse set); the CLI column is labelled "relevance".
+- `POST /api/ingest` only reads paths under `OMNIRAG_INGEST_ROOTS` (default: the server's
+  working directory) and answers `403` otherwise.
+- `PUT /api/kbs/{name}/settings` is a partial update: omitted fields keep their saved values.
+- Uploads with an unsupported file among supported ones ingest the supported files and report
+  the other as `rejected` (only an all-unsupported request gives `415`). `.yaml`, `.yml`,
+  `.toml`, `.ini`, `.cfg`, `.log` and `.text` can be uploaded, as they could be ingested from
+  disk.
+- An inline `modality:` filter with an unknown value is an error, like `--modality`.
+- The ingest format changed (exact table values, `(Image: ...)` markers for MDX image
+  components), so the next `omnirag ingest` of a folder re-ingests every file once.
+
+### Fixed
+
+- Table row chunks kept only four significant digits (`3035.34` became `3035`, `1999999.99`
+  became `2e+06`). Cells are now stored exactly as written; summary means and medians are
+  rounded without scientific notation.
+- `omnirag kb rebuild NAME -e SPEC` saved the new embedder before checking it, so a bogus spec or
+  a missing extra left the knowledge base unusable. The embedder is now validated and every
+  chunk embedded first; on failure the old embedder and vectors stay and the CLI prints a clean
+  error.
+- Invalid embedder specs (`bogus:3`, `hashing:abc`, `st:` without the `embeddings` extra) were
+  accepted when creating a knowledge base, from the CLI and `POST /api/kbs`. They are now
+  rejected (`400` over HTTP).
+- `POST /api/ingest` with an empty path indexed the server's working directory, including its
+  log and other knowledge bases. Blank paths are rejected; no ingest (CLI or HTTP) reads files
+  inside the OmniRAG data directory (except a knowledge base's own uploads); folder walks no
+  longer follow symlinks or junctions out of the folder and skip special files.
+- Unexpected server errors return JSON (`{"detail": ...}`, status 500) instead of a plain-text
+  page, embedding backend failures return `503`, and a failed upload no longer leaves its file
+  behind.
+- Offline answers no longer quote Markdown noise: badge and link fragments cut at chunk
+  boundaries, code blocks (including halves of one), ASCII and box-drawing diagrams,
+  license/copyright lines, inline HTML tags, table header rows, and sentence fragments that
+  start mid-sentence. Sentences are no longer split after "e.g.", "i.e.", "etc." or "vs.".
+  Bracketed numbers inside quoted text (`items[2]`) are no longer read as citations.
+- `--llm openai` without `OPENAI_API_KEY` against the default `api.openai.com` sent the question
+  and sources anyway; it now fails before any request. Keyless use still works for custom
+  `OPENAI_BASE_URL`s such as local servers.
+- `omnirag kb delete` of a knowledge base that is open in the same process no longer fails with
+  `PermissionError` (WinError 32) on Windows; if another process holds it, the knowledge base is
+  left intact and the error says to stop that process.
+- CLI: error messages no longer lose bracketed text to Rich markup (`omnirag[server]`), install
+  hints show the GitHub install command (OmniRAG is not on PyPI), and `serve --port 99999`,
+  `OMNIRAG_CHUNK_SIZE=abc` and a chunk overlap not smaller than the chunk size give clean errors
+  instead of tracebacks.
+- CLI: ingesting an empty folder warns, naming an unsupported file warns and exits with status
+  1, `search` with no hits prints "No results.", `--hyde` without a model warns, and
+  `serve --kb NAME` warns when the knowledge base does not exist yet.
+- HTTP: `chunks?window=` accepts only 0-3 (`422` otherwise), the raw file of a document whose
+  file is gone gives `410` (like re-ingest), CSV raw files are `text/plain` on every platform,
+  and `HEAD /` answers `200`.
+- Retrieval on real documentation corpora: chunks are indexed with a context header (path words
+  and title), MDX imports/JSX are stripped with front-matter titles used as breadcrumbs, very
+  common words are left out of the dense query, and the reranker weighs coverage by IDF and
+  matches multi-word phrases from the question.
+
+### Documentation
+
+- Deployment: the Docker recipe for your own folders mounts them at the same path in the server
+  container (otherwise every document shows as missing), documents `OMNIRAG_INGEST_ROOTS`, and
+  warns against `kb prune` where the folders are not mounted.
+- HTTP API: raw-file media types, the per-word `delta` events of offline answers, the CDN that
+  `/api/docs` loads Swagger UI from, and the new status codes are described as they are.
+- Modalities: 27 code extensions (not 26) and the sniffed text formats; the Python API example
+  now creates and ingests the table it searches; install instructions show pinning to a release
+  tag.
+
 ## [0.3.0] - 2026-11-13
 
 ### Added

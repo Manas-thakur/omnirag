@@ -10,7 +10,7 @@ from typing import Any
 
 from omnirag.generate.citation import Source
 from omnirag.generate.context import ContextAssembler, build_messages
-from omnirag.generate.extractive import ExtractiveAnswerer
+from omnirag.generate.extractive import ExtractiveAnswerer, RowLookup, TermWeights
 from omnirag.generate.llm import LLM, LLMError
 from omnirag.store.models import ScoredChunk
 
@@ -51,10 +51,14 @@ class AnswerGenerator:
         max_tokens: int = 800,
         temperature: float = 0.1,
         fallback: bool = True,
+        weights: TermWeights | None = None,
+        table_rows: RowLookup | None = None,
     ) -> None:
         self.llm = llm
         self.assembler = ContextAssembler(max_context_tokens)
-        self.extractive = ExtractiveAnswerer()
+        # ``weights`` (term rarity in the knowledge base) and ``table_rows``
+        # (all rows of a table document) sharpen the offline answers.
+        self.extractive = ExtractiveAnswerer(weights=weights, table_rows=table_rows)
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.fallback = fallback
@@ -65,7 +69,7 @@ class AnswerGenerator:
         Yields ``("sources", list[Source])`` once retrieval context is packed,
         then ``("delta", str)`` pieces of the answer as they are produced, and
         finally ``("answer", Answer)`` with the citation-checked text. Without an
-        LLM the extractive answer is emitted sentence by sentence.
+        LLM the extractive answer is emitted a word at a time.
         """
         start = time.perf_counter()
         context, tracker = self.assembler.assemble(results)

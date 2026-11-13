@@ -104,7 +104,9 @@ def test_extractive_answer_without_sources_or_matches():
     assert "could not find" in ExtractiveAnswerer().answer("x", [])
     _, tracker = ContextAssembler().assemble(CHUNKS[:1])
     text = ExtractiveAnswerer().answer("zebra giraffe", list(tracker.sources.values()))
-    assert "couldn't find" in text and "closest match" in text and "[1]" in text
+    assert "couldn't find" in text and "closest match" in text and "(source 1)" in text
+    # Nothing was quoted from it, so it is not cited (QA: over-citation).
+    assert "[1]" not in text
     # The unrelated chunk's content must not be presented as an answer.
     assert CHUNKS[0].chunk.content[:40] not in text
 
@@ -211,7 +213,9 @@ def test_llm_errors_are_wrapped():
 
 
 def test_create_llm():
-    s = Settings(ollama_host="http://h:1", ollama_model="qwen", openai_model="gpt-x")
+    s = Settings(
+        ollama_host="http://h:1", ollama_model="qwen", openai_model="gpt-x", openai_api_key="k"
+    )
     assert create_llm("none", s) is None
     assert create_llm("", s) is None
     o = create_llm("ollama", s)
@@ -220,3 +224,13 @@ def test_create_llm():
     assert create_llm("openai", s).model == "gpt-x"
     with pytest.raises(LLMError):
         create_llm("mystery", s)
+
+
+def test_openai_without_key_fails_fast_for_api_openai_com():
+    # QA: --llm openai with no OPENAI_API_KEY sent the question and sources to
+    # api.openai.com anyway. It must fail before any request is made.
+    with pytest.raises(LLMError, match="OPENAI_API_KEY is not set"):
+        create_llm("openai", Settings())
+    # A local OpenAI-compatible server needs no key.
+    local = Settings(openai_base_url="http://localhost:1234/v1")
+    assert create_llm("openai:qwen", local).base_url == "http://localhost:1234/v1"

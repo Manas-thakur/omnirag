@@ -6,8 +6,10 @@ installing the package needs no Node toolchain.
 Security model: meant for local or trusted-network use. Set ``OMNIRAG_API_KEY``
 to require a key on every ``/api/*`` route (except ``/api/health``), and
 ``OMNIRAG_CORS_ORIGINS`` to allow browser clients from other origins. The
-``/api/ingest`` endpoint reads paths on the server's filesystem; uploads are
-stored inside the knowledge base directory.
+``/api/ingest`` endpoint reads paths on the server's filesystem, limited to the
+folders in ``OMNIRAG_INGEST_ROOTS`` (default: the server's working directory)
+and never inside the OmniRAG data directory; uploads are stored inside the
+knowledge base directory.
 """
 
 from __future__ import annotations
@@ -23,14 +25,15 @@ from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from omnirag import __version__
 from omnirag.config import Settings
+from omnirag.embed import EmbeddingError
 from omnirag.generate.llm import LLM, LLMError, create_llm
 from omnirag.health import probe_llm
 from omnirag.index import IndexManager, KBPreferences, KnowledgeBase, KnowledgeBaseError
@@ -38,6 +41,7 @@ from omnirag.ingest.detector import (
     AUDIO_EXTENSIONS,
     CODE_LANGUAGES,
     IMAGE_EXTENSIONS,
+    SNIFFABLE_EXTENSIONS,
     TABLE_EXTENSIONS,
     TEXT_EXTENSIONS,
     TRANSCRIPT_EXTENSIONS,
@@ -53,13 +57,15 @@ from omnirag.store.models import Document, Modality, SearchFilters
 
 STATIC_DIR = Path(__file__).parent / "static"
 
-#: File types accepted by the upload endpoint (everything the ingestors handle).
+#: File types accepted by the upload endpoint (everything the ingestors handle,
+#: including the plain-text config formats ingested from disk: .yaml, .toml, ...).
 UPLOAD_EXTENSIONS: frozenset[str] = frozenset(
     TEXT_EXTENSIONS
     | IMAGE_EXTENSIONS
     | AUDIO_EXTENSIONS
     | TRANSCRIPT_EXTENSIONS
     | TABLE_EXTENSIONS
+    | SNIFFABLE_EXTENSIONS
     | set(CODE_LANGUAGES)
 )
 
@@ -121,10 +127,12 @@ class CreateKBRequest(BaseModel):
 
 
 class PreferencesRequest(BaseModel):
-    llm: str = ""
-    model: str = ""
-    base_url: str = ""
-    top_k: int = Field(5, ge=1, le=50)
+    """A partial update: fields that are left out keep their saved value."""
+
+    llm: str | None = None
+    model: str | None = None
+    base_url: str | None = None
+    top_k: int | None = Field(None, ge=1, le=50)
 
 
 class _StaticFiles(StaticFiles):
@@ -205,6 +213,39 @@ def create_app(
     app.add_middleware(SecurityHeadersMiddleware)
 
     app.mount("/static", _StaticFiles(directory=STATIC_DIR), name="static")
+
+    @app.exception_handler(EmbeddingError)
+    async def embedding_error(_request: Request, exc: EmbeddingError) -> JSONResponse:
+        return JSONResponse({"detail": f"embedding failed: {exc}"}, status_code=503)
+
+    @app.exception_handler(Exception)
+    async def unexpected_error(_request: Request, exc: Exception) -> JSONResponse:
+        # Clients always get JSON with a "detail", never a plain-text page. The
+        # exception still propagates to the ASGI server, which logs the traceback.
+        return JSONResponse(
+            {"detail": f"internal server error ({type(exc).__name__}); see the server log"},
+            status_code=500,
+        )
+
+    ingest_roots = [
+        Path(r).expanduser().resolve() for r in (settings.ingest_roots or (Path.cwd(),))
+    ]
+
+    def check_ingest_path(raw: str) -> str:
+        if not raw or not raw.strip():
+            raise HTTPException(status_code=400, detail="empty path: name a file or folder")
+        try:
+            resolved = Path(raw.strip()).expanduser().resolve()
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=f"invalid path {raw!r}") from exc
+        if not any(resolved == r or resolved.is_relative_to(r) for r in ingest_roots):
+            allowed = ", ".join(str(r) for r in ingest_roots)
+            raise HTTPException(
+                status_code=403,
+                detail=f"{raw!r} is outside the folders this server may ingest from "
+                f"({allowed}); set OMNIRAG_INGEST_ROOTS to allow more",
+            )
+        return str(resolved)
 
     # ---------------------------------------------------------------- helpers
     def get_kb(name: str | None) -> KnowledgeBase:
@@ -291,7 +332,9 @@ def create_app(
         return list(dict.fromkeys(ids))
 
     # ------------------------------------------------------------------- page
-    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    @app.api_route(
+        "/", methods=["GET", "HEAD"], response_class=HTMLResponse, include_in_schema=False
+    )
     def index() -> HTMLResponse:
         page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
         page = page.replace("__DEFAULT_KB__", html.escape(default_kb, quote=True))
@@ -405,7 +448,8 @@ def create_app(
     def put_settings(name: str, req: PreferencesRequest) -> dict[str, Any]:
         kb = get_kb(name)
         try:
-            prefs = KBPreferences.from_dict(req.model_dump())
+            merged = {**kb.preferences.to_dict(), **req.model_dump(exclude_none=True)}
+            prefs = KBPreferences.from_dict(merged)
             return kb.save_preferences(prefs).to_dict()
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -451,19 +495,29 @@ def create_app(
 
     @app.post("/api/kbs/{name}/upload")
     def upload(name: str, files: list[UploadFile] = File(...)) -> dict[str, Any]:
-        """Store uploaded files under the KB directory and ingest them."""
+        """Store uploaded files under the KB directory and ingest them.
+
+        Files of an unsupported type are rejected one by one (``status:
+        "rejected"``) while the rest of the batch is ingested; only a batch with
+        no acceptable file at all fails with 415. A file whose ingest fails is
+        not kept on disk.
+        """
         kb = get_kb(name)
+        names = [safe_filename(f.filename or "") for f in files]
+        rejected: dict[int, str] = {}
+        for i, (upload_file, filename) in enumerate(zip(files, names, strict=True)):
+            if not filename or Path(filename).suffix.lower() not in UPLOAD_EXTENSIONS:
+                rejected[i] = f"unsupported file type: {upload_file.filename or '(unnamed)'}"
+        if len(rejected) == len(files):
+            for upload_file in files:
+                upload_file.file.close()
+            raise HTTPException(status_code=415, detail="; ".join(rejected.values()))
         kb.uploads_dir.mkdir(parents=True, exist_ok=True)
         saved: list[tuple[str, Path, int]] = []
-        names = [safe_filename(f.filename or "") for f in files]
-        for upload_file, filename in zip(files, names, strict=True):
-            if not filename or Path(filename).suffix.lower() not in UPLOAD_EXTENSIONS:
-                raise HTTPException(
-                    status_code=415,
-                    detail=f"unsupported file type: {upload_file.filename or '(unnamed)'}",
-                )
         try:
-            for upload_file, filename in zip(files, names, strict=True):
+            for i, (upload_file, filename) in enumerate(zip(files, names, strict=True)):
+                if i in rejected:
+                    continue
                 target = kb.uploads_dir / filename
                 partial = target.with_name(target.name + ".part")
                 size = 0
@@ -483,23 +537,53 @@ def create_app(
         finally:
             for upload_file in files:
                 upload_file.file.close()
-        report = kb.ingest([p for _, p, _ in saved], root=kb.uploads_dir)
+        known = {
+            str(p.resolve())
+            for _, p, _ in saved
+            if kb.store.get_document_by_source(str(p.resolve()))
+        }
+        try:
+            report = kb.ingest([p for _, p, _ in saved], root=kb.uploads_dir)
+        except BaseException:
+            for _, path, _ in saved:
+                if str(path.resolve()) not in known:
+                    path.unlink(missing_ok=True)
+            raise
         status_by_source = {
             **dict.fromkeys(report.added, "added"),
             **dict.fromkeys(report.updated, "updated"),
             **dict.fromkeys(report.unchanged, "unchanged"),
             **dict.fromkeys(report.failed, "failed"),
         }
+        by_name = {filename: (path, size) for filename, path, size in saved}
         out_files = []
-        for filename, path, size in saved:
+        for i, (upload_file, filename) in enumerate(zip(files, names, strict=True)):
+            if i in rejected:
+                out_files.append(
+                    {
+                        "name": filename or (upload_file.filename or ""),
+                        "size_bytes": 0,
+                        "status": "rejected",
+                        "error": rejected[i],
+                        "doc_id": None,
+                        "chunks": 0,
+                        "warnings": [],
+                    }
+                )
+                continue
+            path, size = by_name[filename]
             source = str(path.resolve())
+            status = status_by_source.get(source, "skipped")
+            if status in {"failed", "skipped"} and source not in known:
+                # Nothing was indexed from it: don't leave an orphan upload behind.
+                path.unlink(missing_ok=True)
             doc = kb.store.get_document_by_source(source)
             out_files.append(
                 {
                     "name": filename,
                     "size_bytes": size,
-                    "status": status_by_source.get(source, "skipped"),
-                    "error": report.failed.get(source),
+                    "status": status,
+                    "error": report.failed.get(source) or report.skipped.get(source),
                     "doc_id": doc.doc_id if doc else None,
                     "chunks": doc.chunk_count if doc else 0,
                     "warnings": report.warnings.get(source, []),
@@ -509,6 +593,13 @@ def create_app(
 
     @app.post("/api/ingest")
     def ingest(req: IngestRequest) -> dict[str, Any]:
+        """Ingest files or folders that already exist on the server.
+
+        Paths must be inside ``OMNIRAG_INGEST_ROOTS`` (default: the server's
+        working directory); files inside the OmniRAG data directory are never
+        ingested.
+        """
+        paths = [check_ingest_path(p) for p in req.paths]
         name = req.kb or default_kb
         try:
             if not manager.exists(name):
@@ -517,8 +608,8 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         kb = get_kb(name)
         try:
-            report = kb.ingest(req.paths, recursive=req.recursive, force=req.force)
-        except FileNotFoundError as exc:
+            report = kb.ingest(paths, recursive=req.recursive, force=req.force)
+        except (FileNotFoundError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return report.to_dict()
 
@@ -604,12 +695,12 @@ def create_app(
         return {"questions": questions}
 
     @app.get("/api/kbs/{name}/chunks/{chunk_id}")
-    def chunk(name: str, chunk_id: str, window: int = 1) -> dict[str, Any]:
+    def chunk(name: str, chunk_id: str, window: int = Query(1, ge=0, le=3)) -> dict[str, Any]:
         kb = get_kb(name)
         c = kb.store.get_chunk(chunk_id) if _ID_RE.match(chunk_id) else None
         if c is None:
             raise HTTPException(status_code=404, detail="chunk not found")
-        before, after = kb.store.neighbors(c, max(0, min(window, 3)))
+        before, after = kb.store.neighbors(c, window)
 
         def as_dict(x):
             return {
@@ -638,12 +729,13 @@ def create_app(
         doc = get_doc(get_kb(name), doc_id)
         path = Path(doc.source)
         if not path.is_file():
-            raise HTTPException(status_code=404, detail="document not found")
+            # Same answer as reingest: the document is indexed, its file is gone.
+            raise HTTPException(status_code=410, detail="the source file no longer exists")
+        # Images (SVG included, inert under RAW_CSP), audio and PDF keep their
+        # media type; everything else, CSV and HTML included, is plain text on
+        # every platform (the OS registry would otherwise decide for CSV).
         media_type = mimetypes.guess_type(path.name)[0] or "text/plain"
-        if not media_type.startswith(("image/", "audio/")) and media_type not in {
-            "application/pdf",
-            "text/csv",
-        }:
+        if not media_type.startswith(("image/", "audio/")) and media_type != "application/pdf":
             media_type = "text/plain; charset=utf-8"
         return FileResponse(
             path,

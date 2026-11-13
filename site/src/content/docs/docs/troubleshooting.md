@@ -10,8 +10,10 @@ OpenAI-compatible reachability and the installed extras, and says what to instal
 
 ### `omnirag serve` says the server extra is missing
 
-The web server is optional. Install it with `pip install "omnirag[server]"` (or add `server` to
-the extras you already use).
+The web server is optional. Install it with
+`pip install "omnirag[server] @ git+https://github.com/Manas-thakur/omnirag"` (or add `server`
+to the extras you already use). OmniRAG is not on PyPI yet, so `pip install "omnirag[server]"`
+on its own does not work.
 
 ### The web app shows "Server unreachable" or keeps asking for an API key
 
@@ -48,12 +50,32 @@ HTML document, or set `OMNIRAG_VLM_MODEL` to an Ollama vision model. See
 
 The library accepts the [supported extensions](/omnirag/docs/concepts/modalities/) up to
 `OMNIRAG_MAX_UPLOAD_MB` (50 MB by default) per file. Uploading a file with the same name again
-replaces the earlier upload.
+replaces the earlier upload. A file that cannot be parsed is reported with its error and not
+kept; the other files of the same upload are still indexed.
+
+### `/api/docs` is a blank page
+
+The OpenAPI page loads Swagger UI from a public CDN, so it needs internet access in the browser.
+Offline, read the schema at `/openapi.json` or the [HTTP API reference](/omnirag/docs/reference/http-api/).
+
+### An answer says it couldn't find anything, but the topic is in my documents
+
+Offline answers quote only sentences that cover the distinctive words of the question; words
+that never appear in the knowledge base count the most. Rephrase with the words your documents
+use, or connect a model (`--llm ollama`).
 
 ### A document shows "missing"
 
-Its source file was moved or deleted after ingestion. Re-ingest it from its new location, delete
-it from the library, or run `omnirag kb prune NAME` to remove every missing document.
+Its source file was moved or deleted after ingestion, or it is not visible to the process that
+reports it: a server in a Docker container only sees the folders mounted into that container,
+at the paths they had when they were ingested (see
+[Deployment](/omnirag/docs/guides/deployment/#docker)). Re-ingest it from its new location,
+delete it from the library, or run `omnirag kb prune NAME` to remove every missing document.
+
+:::caution
+`kb prune` deletes every document whose file it cannot see. Run it only where the source folders
+are mounted at their original paths; otherwise it removes documents that still exist.
+:::
 
 ### Results got worse after changing `OMNIRAG_EMBEDDER`
 

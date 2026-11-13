@@ -23,6 +23,12 @@ STOPWORDS: frozenset[str] = frozenset(
 _WORD_RE = re.compile(r"[A-Za-z0-9]+")
 _CAMEL_RE = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+")
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(\[`])")
+# A period after these does not end a sentence ("e.g. Ollama", "vs. IVF").
+_ABBREVIATION_RE = re.compile(
+    r"\b(?:e\.g|i\.e|etc|vs|cf|approx|incl|esp|resp|viz|et al|fig|vol|"
+    r"dr|mr|mrs|ms|jr|sr|inc|ltd|corp)\.$",
+    re.IGNORECASE,
+)
 
 
 # Bump when tokenisation or stemming changes: hashing-embedder vectors depend on
@@ -233,8 +239,38 @@ def split_sentences(text: str) -> list[str]:
         block = " ".join(line.strip() for line in block.splitlines() if line.strip())
         if not block:
             continue
-        sentences.extend(s.strip() for s in _SENTENCE_RE.split(block) if s.strip())
+        pieces = [s.strip() for s in _SENTENCE_RE.split(block) if s.strip()]
+        merged: list[str] = []
+        for piece in pieces:
+            if merged and _ABBREVIATION_RE.search(merged[-1]):
+                merged[-1] = f"{merged[-1]} {piece}"
+            else:
+                merged.append(piece)
+        sentences.extend(merged)
     return sentences
+
+
+#: Version strings such as ``0.3.0``, ``v2.1`` or ``1.0.0-rc1``.
+VERSION_RE = re.compile(r"(?<![\w.])v?(\d+\.\d+(?:\.\d+)*(?:[-.]?(?:alpha|beta|rc)\.?\d*)?)\b")
+_CHANGE_Q_RE = re.compile(
+    r"\b(chang\w*|what'?s new|new in|release notes?|released|fixed in|added in)\b", re.IGNORECASE
+)
+#: Terms of document names/headings that hold release notes.
+CHANGELOG_TERMS = frozenset({"changelog", "chang", "releas", "histori", "news"})
+
+
+def versions_in(text: str) -> list[str]:
+    """Version strings mentioned in ``text`` (without a leading ``v``)."""
+    return VERSION_RE.findall(text)
+
+
+def mentions_version(text: str, version: str) -> bool:
+    return re.search(rf"(?<![\w.])v?{re.escape(version)}(?![\w]|\.\d)", text) is not None
+
+
+def is_change_question(text: str) -> bool:
+    """ "What changed in 0.3.0?", "What's new in ...", "release notes for ..."."""
+    return bool(_CHANGE_Q_RE.search(text))
 
 
 def truncate(text: str, limit: int) -> str:

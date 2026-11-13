@@ -136,12 +136,8 @@ def test_error_responses(client):
     assert client.post("/api/kbs", json={"name": "../evil"}).status_code == 400
     bad = client.post("/api/query", json={"query": "x", "kb": "fresh", "modalities": ["video"]})
     assert bad.status_code == 400
-    assert (
-        client.post(
-            "/api/ingest", json={"paths": ["/definitely/missing"], "kb": "fresh"}
-        ).status_code
-        == 400
-    )
+    missing = str(Path(__file__).parent / "definitely-missing")
+    assert client.post("/api/ingest", json={"paths": [missing], "kb": "fresh"}).status_code == 400
     assert client.get("/api/kbs/fresh/chunks/nope").status_code == 404
     assert client.get("/api/kbs/fresh/documents/nope/raw").status_code == 404
     assert client.get("/api/kbs/fresh/documents/..%2F..%2Fkb.json/raw").status_code == 404

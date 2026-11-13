@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from omnirag import __version__
-from omnirag.config import Settings
+from omnirag.config import Settings, install_hint
 from omnirag.health import probe_ollama, probe_openai
 
 OK, WARN, FAIL, INFO = "ok", "warn", "fail", "info"
@@ -99,7 +99,7 @@ def run_checks(
             add(
                 "embedder",
                 FAIL,
-                f"{spec} needs sentence-transformers: pip install 'omnirag[embeddings]'",
+                f"{spec} needs sentence-transformers: {install_hint('embeddings')}",
             )
     elif kind == "ollama":
         add("embedder", INFO, f"{spec} (served by Ollama at {settings.ollama_url})")
@@ -155,7 +155,7 @@ def run_checks(
             add(
                 f"extra: {extra}",
                 WARN if extra == "server" else INFO,
-                f"not installed - {purpose} (pip install 'omnirag[{extra}]')",
+                f"not installed - {purpose} ({install_hint(extra)})",
             )
         else:
             add(f"extra: {extra}", OK, f"installed - {purpose}")

@@ -14,7 +14,14 @@ import numpy as np
 
 from omnirag.retrieve.context import index_text
 from omnirag.store.models import Modality, ScoredChunk
-from omnirag.textutil import STOPWORDS, terms
+from omnirag.textutil import (
+    CHANGELOG_TERMS,
+    STOPWORDS,
+    is_change_question,
+    mentions_version,
+    terms,
+    versions_in,
+)
 
 _WORD_RE = re.compile(r"[a-z0-9]+(?:['._-][a-z0-9]+)*")
 
@@ -72,6 +79,8 @@ class LexicalReranker:
         total = sum(weight.values()) or 1.0
         phrases = [p.lower() for p in (phrases or []) if p.strip()]
         auto = query_phrases(query)
+        versions = versions_in(query)
+        about_changes = is_change_question(query)
         boosts = boosts or {}
         top = max(c.score for c in candidates) or 1.0
         for cand in candidates:
@@ -86,14 +95,25 @@ class LexicalReranker:
                 # Longest multi-word phrase from the question found verbatim.
                 hit = max((len(p.split()) for p in auto if p in lowered), default=0)
                 phrase = max(phrase, min(hit / 3, 1.0))
+            heading = str(cand.chunk.metadata.get("heading", ""))
             head = " ".join(
                 [
                     cand.chunk.source,
-                    str(cand.chunk.metadata.get("heading", "")),
+                    heading,
+                    str(cand.chunk.metadata.get("title", "")),
                     str(cand.chunk.metadata.get("symbol", "")),
                 ]
             )
-            title_hit = len(q_terms & set(terms(head))) / len(q_terms) if q_terms else 0.0
+            head_terms = set(terms(head))
+            hits = q_terms & head_terms
+            if about_changes and head_terms & CHANGELOG_TERMS:
+                # "What changed in X?" is answered by a changelog / release notes page.
+                hits |= {t for t in q_terms if t.startswith("chang")}
+            title_hit = len(hits) / len(q_terms) if q_terms else 0.0
+            if versions and any(mentions_version(heading, v) for v in versions):
+                # The section named after the version asked about.
+                phrase = 1.0
+                title_hit = min(1.0, title_hit + 0.5)
             base = (
                 self.retrieval_weight * (cand.score / top)
                 + self.coverage_weight * coverage

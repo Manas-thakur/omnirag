@@ -27,6 +27,8 @@ _ENV_VARS = [
     "OMNIRAG_API_KEY",
     "OMNIRAG_CORS_ORIGINS",
     "OMNIRAG_MAX_UPLOAD_MB",
+    "OMNIRAG_INGEST_ROOTS",
+    "OMNIRAG_TIMEOUT",
 ]
 
 
@@ -45,7 +47,8 @@ def corpus() -> Path:
 
 @pytest.fixture
 def settings(tmp_path) -> Settings:
-    return Settings(home=tmp_path / "home")
+    # The HTTP ingest endpoint may read the example corpus and test files.
+    return Settings(home=tmp_path / "home", ingest_roots=(ROOT, tmp_path))
 
 
 @pytest.fixture

@@ -9,8 +9,11 @@ pre-built inside the package, so no Node.js toolchain is needed to run it.
 ## With pip
 
 ```bash
-# From GitHub (core + web server + PDF + image metadata)
+# From GitHub (core + web server + PDF + image metadata), latest main
 pip install "omnirag[server,pdf,images] @ git+https://github.com/Manas-thakur/omnirag"
+
+# The same, pinned to a release tag
+pip install "omnirag[server,pdf,images] @ git+https://github.com/Manas-thakur/omnirag@v0.3.0"
 
 # From a downloaded release wheel (GitHub Releases page)
 pip install "omnirag-0.3.0-py3-none-any.whl[server,pdf,images]"
@@ -40,7 +43,7 @@ checks as JSON.
 ## With uv
 
 ```bash
-# As a standalone tool on your PATH
+# As a standalone tool on your PATH (append @v0.3.0 to pin a release)
 uv tool install "omnirag[server,pdf,images] @ git+https://github.com/Manas-thakur/omnirag"
 
 # Or run once without installing

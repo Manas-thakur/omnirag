@@ -14,7 +14,8 @@ from rich.panel import Panel
 from rich.table import Table
 
 from omnirag import __version__
-from omnirag.config import Settings
+from omnirag.config import ConfigError, Settings, install_hint
+from omnirag.embed import EmbeddingError
 from omnirag.generate.llm import LLMError
 from omnirag.index import IndexManager, KnowledgeBaseError
 from omnirag.retrieve.retriever import MODES
@@ -36,6 +37,7 @@ err = Console(stderr=True)
 
 class _State:
     home: Path | None = None
+    settings: Settings | None = None
 
 
 state = _State()
@@ -43,13 +45,33 @@ state = _State()
 KB_OPTION = typer.Option("default", "--kb", "-b", help="Knowledge base name.", envvar="OMNIRAG_KB")
 
 
+def _settings() -> Settings:
+    if state.settings is None:
+        try:
+            state.settings = Settings.from_env()
+        except ConfigError as exc:
+            _fail(f"invalid configuration: {exc}")
+    assert state.settings is not None
+    return state.settings
+
+
 def _manager() -> IndexManager:
-    return IndexManager(state.home, Settings.from_env())
+    try:
+        return IndexManager(state.home, _settings())
+    except OSError as exc:
+        _fail(f"cannot use data directory {state.home or _settings().home}: {exc}")
+        raise
 
 
 def _fail(message: str, code: int = 1) -> None:
-    err.print(f"[bold red]error:[/] {message}")
+    # Messages carry paths, specs and install commands such as
+    # pip install "omnirag[server] @ ...": never interpret them as Rich markup.
+    err.print(f"[bold red]error:[/] {escape(message)}")
     raise typer.Exit(code)
+
+
+def _warn(message: str) -> None:
+    err.print(f"[yellow]warning:[/] {escape(message)}")
 
 
 def _human_bytes(n: int) -> str:
@@ -81,6 +103,8 @@ def main_callback(
     ),
 ) -> None:
     state.home = data_dir
+    state.settings = None
+    _settings()  # report invalid OMNIRAG_* settings once, cleanly
 
 
 # --------------------------------------------------------------------------- kb
@@ -101,8 +125,10 @@ def kb_create(
     except KnowledgeBaseError as exc:
         _fail(str(exc))
         return
-    console.print(f"Created knowledge base [bold]{name}[/] (embedder: {kb.config.embedder})")
-    console.print(f"  location: {kb.path}")
+    console.print(
+        f"Created knowledge base [bold]{escape(name)}[/] (embedder: {escape(kb.config.embedder)})"
+    )
+    console.print(f"  location: {escape(str(kb.path))}", highlight=False)
     kb.close()
 
 
@@ -112,15 +138,24 @@ def kb_list() -> None:
     mgr = _manager()
     configs = mgr.list()
     if not configs:
-        console.print(f"No knowledge bases in {mgr.root}. Create one with: omnirag kb create NAME")
+        console.print(
+            f"No knowledge bases in {escape(str(mgr.root))}. "
+            "Create one with: omnirag kb create NAME"
+        )
         return
-    table = Table(title=f"Knowledge bases in {mgr.root}")
+    table = Table(title=escape(f"Knowledge bases in {mgr.root}"))
     for col in ("name", "documents", "chunks", "embedder", "description"):
         table.add_column(col)
     for cfg in configs:
         with mgr.get(cfg.name) as kb:
             s = kb.store.stats()
-        table.add_row(cfg.name, str(s.documents), str(s.chunks), cfg.embedder, cfg.description)
+        table.add_row(
+            escape(cfg.name),
+            str(s.documents),
+            str(s.chunks),
+            escape(cfg.embedder),
+            escape(cfg.description),
+        )
     console.print(table)
 
 
@@ -131,12 +166,19 @@ def kb_delete(
 ) -> None:
     """Delete a knowledge base and all of its data (source files are not touched)."""
     mgr = _manager()
-    if not mgr.exists(name):
+    try:
+        exists = mgr.exists(name)
+    except KnowledgeBaseError as exc:
+        _fail(str(exc))
+    if not exists:
         _fail(f"knowledge base {name!r} does not exist")
     if not yes:
         typer.confirm(f"Delete knowledge base {name!r} and its index?", abort=True)
-    mgr.delete(name)
-    console.print(f"Deleted knowledge base [bold]{name}[/]")
+    try:
+        mgr.delete(name)
+    except KnowledgeBaseError as exc:
+        _fail(str(exc))
+    console.print(f"Deleted knowledge base [bold]{escape(name)}[/]")
 
 
 @kb_app.command("rebuild")
@@ -150,7 +192,9 @@ def kb_rebuild(
     try:
         with _manager().get(name) as kb:
             n = kb.rebuild(embedder)
-            console.print(f"Re-embedded {n} chunks with {kb.config.embedder}")
+            console.print(f"Re-embedded {n} chunks with {escape(kb.config.embedder)}")
+    except EmbeddingError as exc:
+        _fail(f"{exc} (the knowledge base still uses its previous embedder)")
     except KnowledgeBaseError as exc:
         _fail(str(exc))
 
@@ -172,7 +216,7 @@ def kb_prune(name: str = typer.Argument(...)) -> None:
 # ----------------------------------------------------------------------- ingest
 @app.command()
 def ingest(
-    paths: list[Path] = typer.Argument(..., help="Files and/or directories to ingest."),
+    paths: list[str] = typer.Argument(..., help="Files and/or directories to ingest."),
     kb_name: str = KB_OPTION,
     recursive: bool = typer.Option(True, "--recursive/--no-recursive", help="Recurse into dirs."),
     force: bool = typer.Option(False, "--force", help="Re-ingest even unchanged files."),
@@ -180,13 +224,17 @@ def ingest(
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Only print the summary."),
 ) -> None:
     """Ingest files into a knowledge base (incremental: unchanged files are skipped)."""
+    # Files inside the OmniRAG data directory are never ingested, and folder walks
+    # do not follow links that lead outside the folder (see ingest.orchestrator).
+    if any(not p.strip() for p in paths):
+        _fail("empty path: name a file or folder to ingest")
     mgr = _manager()
     try:
         if not mgr.exists(kb_name):
             if not create:
                 _fail(f"knowledge base {kb_name!r} does not exist")
             mgr.create(kb_name).close()
-            console.print(f"Created knowledge base [bold]{kb_name}[/]")
+            console.print(f"Created knowledge base [bold]{escape(kb_name)}[/]")
         kb = mgr.get(kb_name)
     except KnowledgeBaseError as exc:
         _fail(str(exc))
@@ -199,25 +247,35 @@ def ingest(
             return
         color = colors.get(status, "white")
         console.print(
-            f"  [{color}]{status:>9}[/] {path}" + (f" [dim]({detail})[/]" if detail else "")
+            f"  [{color}]{status:>9}[/] {escape(str(path))}"
+            + (f" [dim]({escape(detail)})[/]" if detail else ""),
+            highlight=False,
         )
 
     try:
         report = kb.ingest(paths, recursive=recursive, force=force, progress=progress)
-    except FileNotFoundError as exc:
-        kb.close()
+    except (FileNotFoundError, ValueError, EmbeddingError) as exc:
         _fail(str(exc))
         return
+    finally:
+        kb.close()
     for source, warns in report.warnings.items():
         for w in warns:
-            console.print(f"  [yellow]warning[/] {Path(source).name}: {w}")
+            _warn(f"{Path(source).name}: {w}")
+    named = {str(Path(p).expanduser().resolve()) for p in paths}
+    explicit_skips = 0
+    for source, reason in report.skipped.items():
+        _warn(f"skipped {source}: {reason}")
+        explicit_skips += source in named
+    seen = report.processed + len(report.unchanged) + len(report.failed)
+    if not seen and not report.skipped:
+        _warn("no supported files found in " + ", ".join(paths))
     console.print(
-        f"[bold]{kb_name}[/]: {len(report.added)} added, {len(report.updated)} updated, "
+        f"[bold]{escape(kb_name)}[/]: {len(report.added)} added, {len(report.updated)} updated, "
         f"{len(report.unchanged)} unchanged, {len(report.failed)} failed - "
         f"{report.chunks} chunks in {report.seconds:.2f}s"
     )
-    kb.close()
-    if report.failed and not report.processed and not report.unchanged:
+    if (report.failed and not report.processed and not report.unchanged) or explicit_skips:
         raise typer.Exit(1)
 
 
@@ -276,7 +334,7 @@ def query(
     ),
 ) -> None:
     r"""Ask a question and get an answer with \[n] citations."""
-    settings = Settings.from_env()
+    settings = _settings()
     llm_name = llm or settings.llm
     try:
         with _manager().get(kb_name) as kb:
@@ -289,18 +347,18 @@ def query(
                 neighbors=neighbors,
                 hyde=hyde,
             )
-    except (KnowledgeBaseError, LLMError, ValueError) as exc:
+    except (KnowledgeBaseError, LLMError, EmbeddingError, ValueError) as exc:
         _fail(str(exc))
         return
     if as_json:
         print(json.dumps(answer.to_dict(), indent=2, default=str))
         return
     for warning in answer.warnings:
-        err.print(f"[yellow]warning:[/] {warning}")
+        _warn(warning)
     console.print(
         Panel(
             Markdown(answer.text),
-            title=f"[bold]{question}[/]",
+            title=f"[bold]{escape(question)}[/]",
             subtitle=f"{answer.backend} - {answer.timings.get('total_ms', 0):.0f} ms",
             border_style="cyan",
         )
@@ -311,13 +369,14 @@ def query(
         table.add_column("cited")
         table.add_column("modality")
         table.add_column("source")
-        table.add_column("score", justify="right")
+        table.add_column("relevance", justify="right")
         for s in answer.sources:
+            where = s.metadata.get("path", s.label) + (f" ({s.location})" if s.location else "")
             table.add_row(
-                f"[{s.index}]",
+                escape(f"[{s.index}]"),
                 "yes" if s.index in answer.cited else "",
                 s.modality,
-                s.metadata.get("path", s.label) + (f" ({s.location})" if s.location else ""),
+                escape(where),
                 f"{s.score:.3f}",
             )
         console.print(table)
@@ -338,7 +397,7 @@ def search(
             result = kb.search(
                 text, k=top_k, filters=_filters(modality, None), mode=mode, neighbors=0
             )
-    except (KnowledgeBaseError, ValueError) as exc:
+    except (KnowledgeBaseError, EmbeddingError, ValueError) as exc:
         _fail(str(exc))
         return
     if as_json:
@@ -355,11 +414,16 @@ def search(
         ]
         print(json.dumps(rows, indent=2, default=str))
         return
+    if not result.results:
+        console.print("No results.")
+        return
     for i, r in enumerate(result.results, start=1):
         ranks = ", ".join(f"{k}#{v}" for k, v in r.retrieval.get("ranks", {}).items())
+        path = str(r.chunk.metadata.get("path", r.chunk.source))
         console.print(
-            f"[bold]{i}.[/] [cyan]{r.chunk.metadata.get('path', r.chunk.source)}[/] "
-            f"[dim]({r.chunk.modality.value}, score {r.score:.3f}; {ranks})[/]"
+            f"[bold]{i}.[/] [cyan]{escape(path)}[/] "
+            f"[dim]({r.chunk.modality.value}, relevance {r.score:.3f}; {escape(ranks)})[/]",
+            highlight=False,
         )
         preview = " ".join(r.chunk.content.split())
         console.print(f"   {preview[:220]}{'...' if len(preview) > 220 else ''}", markup=False)
@@ -413,7 +477,7 @@ def doctor(
     """Check Python, the data dir, the embedder, model servers and optional extras."""
     from omnirag.doctor import FAIL, run_checks
 
-    checks = run_checks(Settings.from_env(), home=state.home, network=network)
+    checks = run_checks(_settings(), home=state.home, network=network)
     failed = [c for c in checks if c.status == FAIL]
     if as_json:
         print(json.dumps([c.to_dict() for c in checks], indent=2))
@@ -437,7 +501,7 @@ def doctor(
 @app.command()
 def serve(
     host: str = typer.Option("127.0.0.1", "--host", help="Bind address."),
-    port: int = typer.Option(8000, "--port", "-p", help="Port."),
+    port: int = typer.Option(8000, "--port", "-p", min=1, max=65535, help="Port."),
     kb_name: str = KB_OPTION,
 ) -> None:
     """Start the API server and web UI."""
@@ -446,11 +510,25 @@ def serve(
 
         from omnirag.server.app import create_app
     except ImportError:
-        _fail("the web server needs extra packages: pip install 'omnirag[server]'")
+        _fail("the web server needs extra packages: " + install_hint("server"))
         return
-    application = create_app(home=state.home, default_kb=kb_name)
-    console.print(f"OmniRAG web UI on [bold]http://{host}:{port}[/]  (Ctrl+C to stop)")
-    uvicorn.run(application, host=host, port=port, log_level="info")
+    mgr = _manager()
+    try:
+        missing = not mgr.exists(kb_name)
+    except KnowledgeBaseError as exc:
+        _fail(str(exc))
+        return
+    if missing:
+        _warn(
+            f"knowledge base {kb_name!r} does not exist yet; it is created by the first "
+            "ingest or upload (or choose another one with --kb)"
+        )
+    application = create_app(home=state.home, default_kb=kb_name, settings=_settings())
+    console.print(f"OmniRAG web UI on [bold]http://{escape(host)}:{port}[/]  (Ctrl+C to stop)")
+    try:
+        uvicorn.run(application, host=host, port=port, log_level="info")
+    except OSError as exc:  # pragma: no cover - depends on the machine
+        _fail(f"cannot listen on {host}:{port}: {exc}")
 
 
 def main() -> None:

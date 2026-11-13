@@ -177,6 +177,8 @@ export interface IngestReport {
   unchanged: string[]
   failed: Record<string, string>
   warnings: Record<string, string[]>
+  /** Paths that were not ingested and why (unsupported, inside the data dir, ...). */
+  skipped?: Record<string, string>
   chunks: number
   seconds: number
   processed: number
@@ -186,7 +188,8 @@ export interface UploadResult {
   files: {
     name: string
     size_bytes: number
-    status: "added" | "updated" | "unchanged" | "failed" | "skipped"
+    /** "rejected": unsupported type, refused before upload; the rest of a batch still runs. */
+    status: "added" | "updated" | "unchanged" | "failed" | "skipped" | "rejected"
     error: string | null
     doc_id: string | null
     chunks: number

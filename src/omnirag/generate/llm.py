@@ -156,6 +156,11 @@ class OpenAICompatibleLLM(LLM):
             raise LLMError(f"OpenAI-compatible request to {self.base_url} failed: {exc}") from exc
 
 
+def _is_hosted_openai(base_url: str) -> bool:
+    host = httpx.URL(base_url).host if base_url else "api.openai.com"
+    return host == "api.openai.com" or host.endswith(".openai.com")
+
+
 def create_llm(name: str | None, settings: Settings | None = None) -> LLM | None:
     """Build an LLM from a backend name. ``none`` (or empty) returns ``None``,
     which selects the offline extractive answerer.
@@ -174,6 +179,13 @@ def create_llm(name: str | None, settings: Settings | None = None) -> LLM | None
             model or settings.ollama_model, settings.ollama_url, settings.request_timeout
         )
     if kind in {"openai", "openai-compatible"}:
+        if not settings.openai_api_key and _is_hosted_openai(settings.openai_base_url):
+            # Fail before any question or document text leaves the machine.
+            raise LLMError(
+                "OPENAI_API_KEY is not set. Set it to use api.openai.com, or point "
+                "OPENAI_BASE_URL at an OpenAI-compatible server that needs no key "
+                "(e.g. http://localhost:1234/v1 for LM Studio)."
+            )
         return OpenAICompatibleLLM(
             model or settings.openai_model,
             settings.openai_base_url,

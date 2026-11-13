@@ -10,6 +10,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import math
 import statistics
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,32 @@ from omnirag.store.models import Modality
 ROWS_PER_CHUNK = 20
 
 
+class _Int(int):
+    """An integer parsed from text that remembers how it was written."""
+
+    text: str
+
+    def __new__(cls, text: str) -> _Int:
+        obj = super().__new__(cls, text)
+        obj.text = text
+        return obj
+
+
+class _Float(float):
+    """A float parsed from text that remembers how it was written.
+
+    Row chunks show values exactly as the source wrote them (``3035.340``,
+    ``1999999.99``), never a rounded or scientific rendering.
+    """
+
+    text: str
+
+    def __new__(cls, text: str) -> _Float:
+        obj = super().__new__(cls, text)
+        obj.text = text
+        return obj
+
+
 def _coerce(value: Any) -> Any:
     if isinstance(value, str):
         s = value.strip()
@@ -37,13 +64,15 @@ def _coerce(value: Any) -> Any:
         if low in {"true", "false"}:
             return low == "true"
         try:
-            return int(s)
+            return _Int(s)
         except ValueError:
             pass
         try:
-            return float(s)
+            number = _Float(s)
         except ValueError:
             return s
+        # "nan", "inf" and friends are words in a table, not numbers.
+        return number if math.isfinite(number) else s
     return value
 
 
@@ -63,11 +92,37 @@ def _column_type(values: list[Any]) -> str:
 
 
 def _fmt(v: Any) -> str:
+    """A cell value as written in the source (exact, never rounded)."""
+    text = getattr(v, "text", None)
+    if text is not None:
+        return text
+    if isinstance(v, bool):
+        return "true" if v else "false"
     if isinstance(v, float):
-        return f"{v:.4g}"
+        return repr(v)  # shortest exact form (never rounded)
     if isinstance(v, (dict, list)):
         return json.dumps(v, ensure_ascii=False)[:200]
     return str(v)
+
+
+def _fmt_stat(v: float) -> str:
+    """A computed statistic (mean, median): rounded for reading, but never to
+    scientific notation for everyday magnitudes."""
+    if not math.isfinite(v):
+        return str(v)
+    a = abs(v)
+    if a != 0 and (a >= 1e15 or a < 1e-4):
+        return f"{v:.4g}"
+    if v.is_integer():
+        return str(int(v))
+    # Two decimals for large values, about four significant digits for small ones.
+    decimals = 2 if a >= 1 else min(8, 3 - math.floor(math.log10(a)))
+    return f"{v:.{decimals}f}".rstrip("0").rstrip(".")
+
+
+def _json_loads(text: str) -> Any:
+    # Keep numbers as written ("2.50" stays "2.50" in row chunks).
+    return json.loads(text, parse_float=_Float, parse_int=_Int)
 
 
 def load_rows(path: Path) -> list[dict[str, Any]]:
@@ -88,11 +143,11 @@ def load_rows(path: Path) -> list[dict[str, Any]]:
         rows = []
         for line in text.splitlines():
             if line.strip():
-                obj = json.loads(line)
+                obj = _json_loads(line)
                 rows.append(obj if isinstance(obj, dict) else {"value": obj})
         return rows
     try:
-        data = json.loads(text)
+        data = _json_loads(text)
     except json.JSONDecodeError as exc:
         raise IngestError(f"invalid JSON: {exc}") from exc
     if isinstance(data, list):
@@ -121,12 +176,12 @@ def describe_table(name: str, rows: list[dict[str, Any]]) -> tuple[str, list[str
         detail = f"- {col} ({ctype})"
         if ctype in {"integer", "float"} and present:
             nums = [float(v) for v in present]
-            detail += (
-                f": min {_fmt(min(nums))}, max {_fmt(max(nums))}, "
-                f"mean {_fmt(statistics.fmean(nums))}"
-            )
+            # min and max are real cells: shown exactly as written.
+            lo = min(present, key=float)
+            hi = max(present, key=float)
+            detail += f": min {_fmt(lo)}, max {_fmt(hi)}, mean {_fmt_stat(statistics.fmean(nums))}"
             if len(nums) > 1:
-                detail += f", median {_fmt(statistics.median(nums))}"
+                detail += f", median {_fmt_stat(float(statistics.median(nums)))}"
         elif ctype in {"string", "boolean"} and present:
             counts: dict[str, int] = {}
             for v in present:

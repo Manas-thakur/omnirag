@@ -117,3 +117,21 @@ def test_table_row_split_at_chunk_boundary_has_no_stray_pipes():
 
     out = _prose_lines("Mutes this kind of incident on this source and column |")
     assert "|" not in out and "Mutes this kind of incident on this source and column" in out
+
+
+def test_table_listing_only_shows_rows_meeting_every_condition(manager, tmp_path):
+    folder = tmp_path / "orders"
+    folder.mkdir()
+    rows = ["order_id,region,status"]
+    for i in range(60):
+        region = ["north", "south"][i % 2]
+        status = ["completed", "completed", "returned"][i % 3]
+        rows.append(f"{1000 + i},{region},{status}")
+    (folder / "orders.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+    kb = manager.create("orders")
+    kb.ingest([folder])
+    text = kb.ask("Which orders are in the north region and returned?").text
+    listed = [ln for ln in text.splitlines() if ln.startswith("- Row ")]
+    assert listed, text
+    assert all("region=north" in ln and "status=returned" in ln for ln in listed), text
+    kb.close()

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from omnirag.query import (
     ModalityRouter,
     QueryIntent,
@@ -23,12 +25,18 @@ def test_parse_inline_filters():
     assert p.text == "token bucket refill rate"
 
 
-def test_parse_keeps_unknown_filters_and_urls_as_text():
-    p = QueryParser().parse("what is modality:hologram at https://example.com speaker:Priya")
-    assert "modality:hologram" in p.text
+def test_parse_keeps_unknown_filter_keys_and_urls_as_text():
+    p = QueryParser().parse("what is colour:blue at https://example.com speaker:Priya")
+    assert "colour:blue" in p.text
     assert "https://example.com" in p.text
     assert p.filters.metadata == {"speaker": "Priya"}
     assert p.filters.modalities is None
+
+
+def test_parse_rejects_unknown_inline_modality_like_the_option_does():
+    # QA: "modality:bogus" used to be searched as plain text while -m bogus failed.
+    with pytest.raises(ValueError, match="unknown modality 'hologram'"):
+        QueryParser().parse("what is modality:hologram")
 
 
 def test_parse_handles_apostrophes():

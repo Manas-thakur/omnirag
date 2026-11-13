@@ -4,7 +4,9 @@ description: Every endpoint of the OmniRAG server, with request and response sha
 ---
 
 `omnirag serve` exposes a JSON API under `/api`. Interactive OpenAPI docs are served at
-`/api/docs`. Examples assume the default `http://localhost:8000`.
+`/api/docs`; that page loads Swagger UI from a public CDN, so it is blank without internet
+access (the schema itself is at `/openapi.json`). Examples assume the default
+`http://localhost:8000`.
 
 ## Conventions
 
@@ -12,7 +14,8 @@ description: Every endpoint of the OmniRAG server, with request and response sha
   `GET /api/health` and `/api/docs` needs `X-API-Key: <key>` or `Authorization: Bearer <key>`;
   otherwise the server answers `401` with `{"detail": "missing or invalid API key"}`.
 - **Errors** are JSON: `{"detail": "..."}` (or a list of validation errors with status `422`).
-  Unknown knowledge bases and documents give `404`.
+  Unknown knowledge bases and documents give `404`; an embedding backend that fails gives `503`;
+  an unexpected server error gives `500` with `{"detail": "internal server error (...)"}`.
 - **Knowledge base names** appear in paths; omitted `kb` fields mean the server's default
   knowledge base (the one passed to `omnirag serve --kb`).
 - **Ids** (`doc_id`, `chunk_id`) are letters, digits, `_` and `-`, up to 80 characters.
@@ -62,8 +65,10 @@ A list of knowledge bases: `name`, `description`, `embedder`, `documents`, `chun
 ### `POST /api/kbs`
 
 Body: `{"name": "notes", "description": "", "embedder": null}`. Returns `201` with the new
-knowledge base, or `400` if the name is invalid or taken. `embedder` takes the same specs as
-`omnirag kb create --embedder`.
+knowledge base, or `400` if the name is invalid or taken or the embedder spec is not valid.
+`embedder` takes the same specs as `omnirag kb create --embedder` (`hashing[:dim]` with a
+dimension from 16 to 65536, `st:<model>` with the `embeddings` extra installed, or
+`ollama:<model>`).
 
 ### `GET /api/kbs/{name}`
 
@@ -88,8 +93,8 @@ Per-knowledge-base answer settings:
 ```
 
 `llm` is `""` (server default), `"none"`, `"ollama"` or `"openai"`; `top_k` is 1–50. Empty
-`model` and `base_url` fall back to the environment. Saved in the knowledge base's
-`settings.json`.
+`model` and `base_url` fall back to the environment. `PUT` is a partial update: fields left
+out of the body keep their saved values. Saved in the knowledge base's `settings.json`.
 
 ## Documents
 
@@ -121,8 +126,10 @@ through the API.
 ### `POST /api/kbs/{name}/upload`
 
 Multipart form with one or more `files` fields. Files are stored in the knowledge base's
-`uploads/` folder and ingested. Unsupported extensions give `415`; files over
-`OMNIRAG_MAX_UPLOAD_MB` give `413`.
+`uploads/` folder and ingested. A file with an unsupported extension is reported with status
+`rejected` while the rest of the batch is ingested; only a request where every file is
+unsupported gives `415`. Files over `OMNIRAG_MAX_UPLOAD_MB` give `413`. A file that fails to
+ingest is reported as `failed` with its `error` and is not kept on disk.
 
 ```bash
 curl -s localhost:8000/api/kbs/notes/upload -F files=@handbook.pdf -F files=@schema.sql
@@ -139,7 +146,8 @@ curl -s localhost:8000/api/kbs/notes/upload -F files=@handbook.pdf -F files=@sch
 }
 ```
 
-`status` is `added`, `updated`, `unchanged`, `failed` or `skipped`.
+`status` is `added`, `updated`, `unchanged`, `failed`, `skipped` or `rejected`. The report's
+`skipped` map lists paths that were not ingested and why.
 
 ### `DELETE /api/kbs/{name}/documents/{doc_id}`
 
@@ -153,12 +161,14 @@ the ingest report; `410` if the source file is gone.
 
 ### `GET /api/kbs/{name}/documents/{doc_id}/raw`
 
-The original file, served inline with a sandboxing Content Security Policy. Images, audio, PDF
-and CSV keep their media type; everything else (including HTML and SVG) is served as plain text.
+The original file, served inline with a sandboxing Content Security Policy. Images (SVG as
+`image/svg+xml`, inert under the sandbox), audio and PDF keep their media type; everything else,
+including CSV and HTML, is served as `text/plain`. `410` if the source file is gone (the
+document is still indexed; re-ingest it from its new location or delete it).
 
 ### `GET /api/kbs/{name}/chunks/{chunk_id}`
 
-Query: `window` (0–3, default 1). Returns the chunk (`chunk_id`, `position`, `content`,
+Query: `window` (0–3, default 1; other values give `422`). Returns the chunk (`chunk_id`, `position`, `content`,
 `metadata`, `doc_id`, `source`, `modality`) with up to `window` neighbouring chunks in `before`
 and `after`.
 
@@ -167,6 +177,13 @@ and `after`.
 Body: `{"paths": ["/srv/docs"], "kb": "notes", "recursive": true, "force": false}`. Ingests
 paths **on the server's filesystem** and creates the knowledge base if needed. Returns the
 ingest report. Protect it with an API key before exposing the server.
+
+- An empty or blank path gives `400`.
+- Paths must be inside `OMNIRAG_INGEST_ROOTS` (default: the server's working directory);
+  others give `403`.
+- Files inside OmniRAG's data directory are never ingested, folder walks do not follow links
+  that lead outside the folder, and special files (sockets, FIFOs, devices) are skipped.
+  Skipped paths are listed in the report's `skipped` map.
 
 ## Asking
 
@@ -195,7 +212,7 @@ The response:
 ```json
 {
   "question": "How are refresh tokens rotated?",
-  "answer": "Refresh tokens are rotated: each refresh invalidates the previous one. [1]",
+  "answer": "- Refresh tokens are rotated: each refresh invalidates the previous one. [1]",
   "backend": "extractive",
   "cited": [1],
   "sources": [
@@ -252,7 +269,8 @@ data: {"question": "...", "answer": "...", "cited": [1, 2], ...}
 ```
 
 Each event is an `event:` line, one `data:` line of JSON and a blank line. Model backends stream
-token by token; the extractive answerer emits its answer sentence by sentence.
+token by token; the extractive answerer emits its answer one word (with its trailing space) per
+`delta` event.
 
 ### `POST /api/kbs/{name}/related`
 

@@ -29,17 +29,31 @@ docker run --rm -v omnirag-data:/data ghcr.io/manas-thakur/omnirag omnirag inges
 docker run --rm -p 8000:8000 -v omnirag-data:/data -e OMNIRAG_KB=demo ghcr.io/manas-thakur/omnirag
 ```
 
-To ingest your own folders, mount them read-only and ingest the mount path:
+To ingest your own folders, mount them read-only, ingest the mount path, and mount the **same
+folder at the same path** in the server container. A knowledge base stores the path of every
+source file; the server reads the files from there (source previews, raw downloads, re-ingest)
+and reports a document as `missing` when its path does not exist inside the container.
 
 ```bash
 docker run --rm -v omnirag-data:/data -v "$PWD/docs:/docs:ro" \
   ghcr.io/manas-thakur/omnirag omnirag ingest /docs --kb team
+docker run -d --name omnirag -p 8000:8000 -v omnirag-data:/data -v "$PWD/docs:/docs:ro" \
+  -e OMNIRAG_KB=team ghcr.io/manas-thakur/omnirag
 ```
+
+To ingest from the running server instead (`POST /api/ingest` or `docker exec`), allow the
+mounted folder with `-e OMNIRAG_INGEST_ROOTS=/docs`: by default the server only ingests paths
+under its working directory (`/app` in the image).
+
+:::caution
+Never run `omnirag kb prune` against a knowledge base whose folders are not mounted where they
+were ingested: every document would look missing and prune would remove them all.
+:::
 
 ## Without Docker
 
 ```bash
-pip install "omnirag[server,pdf,images] @ git+https://github.com/Manas-thakur/omnirag"
+pip install "omnirag[server,pdf,images] @ git+https://github.com/Manas-thakur/omnirag@v0.3.0"
 OMNIRAG_API_KEY=change-me omnirag serve --host 0.0.0.0 --port 8000 --kb team
 ```
 
@@ -50,7 +64,8 @@ TLS in front of it. Server-sent events need response buffering off; the server a
 ## API key
 
 Set `OMNIRAG_API_KEY` to require a key on every `/api/*` route except `GET /api/health`
-and the OpenAPI docs at `/api/docs`. Clients send it as `X-API-Key: <key>` or
+and the OpenAPI docs at `/api/docs` (that page loads Swagger UI from a public CDN, so it stays
+blank on a machine without internet access; the schema itself is at `/openapi.json`). Clients send it as `X-API-Key: <key>` or
 `Authorization: Bearer <key>`. The web app asks for the key once and keeps it in the browser.
 
 ```bash
@@ -76,17 +91,19 @@ export OMNIRAG_CORS_ORIGINS=https://intranet.example.com,https://tools.example.c
   to disk.
 - **Raw files** (`GET /api/kbs/{name}/documents/{doc_id}/raw`) are served only for registered
   documents, looked up by id, never by a client path, with a sandboxing Content Security Policy;
-  HTML and SVG are never rendered as active content.
+  HTML is served as plain text and SVG is sandboxed, so neither runs as active content.
 - **The page** is served with a strict Content Security Policy: scripts, fonts and connections
   only from the same origin, no framing.
 - Every response carries `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and
   `X-Frame-Options: DENY`.
 
 :::caution
-`POST /api/ingest` reads **paths on the server's filesystem**. It is protected by the API key
-like every other route, but anyone with the key can index any file the server process can read.
-Run the server as an unprivileged user (the Docker image does) and give it access only to what
-it should index.
+`POST /api/ingest` reads **paths on the server's filesystem**. It only accepts paths under
+`OMNIRAG_INGEST_ROOTS` (a list separated by `:` on Linux and macOS, `;` on Windows; default: the
+server's working directory), never ingests OmniRAG's own data directory, and does not follow
+links out of an ingested folder. It is protected by the API key like every other route, but
+anyone with the key can index any readable file under those roots. Run the server as an
+unprivileged user (the Docker image does) and give it access only to what it should index.
 :::
 
 ## Backups

@@ -107,7 +107,7 @@ omnirag ingest PATHS... [OPTIONS]
 
 | Argument | Type | Description |
 | -------- | ---- | ----------- |
-| `PATHS` | path, one or more | Files and/or directories to ingest. |
+| `PATHS` | text, one or more | Files and/or directories to ingest. |
 
 | Option | Type | Default | Description |
 | ------ | ---- | ------- | ----------- |
@@ -202,7 +202,7 @@ omnirag serve [OPTIONS]
 | Option | Type | Default | Description |
 | ------ | ---- | ------- | ----------- |
 | `--host` | text | `127.0.0.1` | Bind address. |
-| `--port` / `-p` | integer | `8000` | Port. |
+| `--port` / `-p` | integer 1–65535 | `8000` | Port. |
 | `--kb` / `-b` | text | `default` | Knowledge base name. Env: `OMNIRAG_KB`. |
 
 ## `omnirag doctor`

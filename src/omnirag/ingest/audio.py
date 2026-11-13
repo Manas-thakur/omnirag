@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from omnirag.chunking import RawChunk, split_text
+from omnirag.config import install_hint
 from omnirag.ingest.base import (
     IngestContext,
     Ingestor,
@@ -195,7 +196,7 @@ class AudioIngestor(Ingestor):
             except ImportError:
                 warnings.append(
                     "no transcript sidecar and faster-whisper is not installed "
-                    "(pip install 'omnirag[audio]'); stored metadata only"
+                    f"({install_hint('audio')}); stored metadata only"
                 )
             except Exception as exc:
                 warnings.append(f"transcription failed: {exc}")

@@ -161,7 +161,9 @@ class HybridRetriever:
             vec = self.store.embedding_of(cand.chunk.chunk_id)
             if vec is not None:
                 embeddings[cand.chunk.chunk_id] = vec
-        results = mmr(pool, embeddings, plan.k, self.mmr_lambda)
+        # MMR picks a diverse set; it is then listed by relevance so the
+        # numbered sources (and their scores) read best-first.
+        results = sorted(mmr(pool, embeddings, plan.k, self.mmr_lambda), key=lambda c: -c.score)
         if plan.neighbors > 0:
             augment_with_neighbors(self.store, results, plan.neighbors)
         return RetrievalResult(parsed, plan, results, mode)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import httpx
 import numpy as np
 
+from omnirag.config import install_hint
 from omnirag.embed.base import Embedder, EmbeddingError, l2_normalize
 
 _QUERY_PREFIXES = {
@@ -21,7 +22,7 @@ class SentenceTransformerEmbedder(Embedder):
             from sentence_transformers import SentenceTransformer
         except ImportError as exc:
             raise EmbeddingError(
-                "sentence-transformers is not installed: pip install 'omnirag[embeddings]'"
+                "sentence-transformers is not installed: " + install_hint("embeddings")
             ) from exc
         self.model_name = model_name
         self.name = f"st:{model_name}"

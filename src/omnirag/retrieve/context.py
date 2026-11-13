@@ -30,6 +30,9 @@ def _path_words(path: str) -> str:
     return " ".join(_SEP_RE.sub(" ", p).strip() for p in parts if p).strip()
 
 
+path_words = _path_words
+
+
 def context_header(metadata: Mapping[str, Any] | None) -> str:
     meta = metadata or {}
     words = _path_words(str(meta.get("path") or ""))

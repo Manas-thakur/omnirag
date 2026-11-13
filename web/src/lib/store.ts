@@ -524,7 +524,7 @@ export async function uploadFiles(fileList: FileList | File[]) {
         patchUpload(id, p >= 1 ? { progress: 1, state: "indexing", message: "Indexing…" } : { progress: p, message: `${Math.round(p * 100)}%` }),
       )
       const f = result.files?.[0]
-      if (!f || f.status === "failed") {
+      if (!f || f.status === "failed" || f.status === "rejected" || f.status === "skipped") {
         patchUpload(id, { state: "error", progress: 1, message: `Could not ingest: ${f?.error ?? "unknown error"}` })
       } else {
         changed += 1

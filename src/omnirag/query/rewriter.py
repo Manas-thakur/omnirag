@@ -53,6 +53,9 @@ SYNONYMS: dict[str, tuple[str, ...]] = {
     "cache": ("caching",),
     "caching": ("cache",),
     "migration": ("migrate", "schema"),
+    "changed": ("changelog",),
+    "change": ("changelog",),
+    "changes": ("changelog",),
 }
 
 

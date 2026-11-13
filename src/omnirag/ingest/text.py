@@ -7,6 +7,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 from omnirag.chunking import RawChunk, chunk_markdown, split_text
+from omnirag.config import install_hint
 from omnirag.ingest.base import (
     IngestContext,
     IngestError,
@@ -31,8 +32,10 @@ def _clean_mdx(text: str) -> str:
     text = _MDX_IMPORT_RE.sub("", text)
 
     def component(m: re.Match) -> str:
+        # Keep what an image component says, marked as image text so answers
+        # prefer real prose over it.
         described = [a for a in _JSX_ATTR_RE.findall(m.group(2)) if a.strip()]
-        return " ".join(described)
+        return f"\n\n(Image: {' - '.join(described)})\n\n" if described else ""
 
     text = _MDX_COMPONENT_RE.sub(component, text)
     return _MDX_CLOSING_RE.sub("", text)
@@ -200,7 +203,7 @@ class TextIngestor(Ingestor):
             from pypdf import PdfReader
         except ImportError as exc:  # pragma: no cover - depends on environment
             raise IngestError(
-                "PDF support needs the optional 'pypdf' package: pip install 'omnirag[pdf]'"
+                "PDF support needs the optional 'pypdf' package: " + install_hint("pdf")
             ) from exc
         try:
             reader = PdfReader(str(path))

@@ -3,6 +3,8 @@ cross-file context (such as image alt text found in Markdown documents)."""
 
 from __future__ import annotations
 
+import os
+import stat
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -67,35 +69,111 @@ def is_sidecar(path: Path) -> bool:
     return False
 
 
-def discover(paths: Iterable[str | Path], recursive: bool = True) -> list[Path]:
-    """Expand files/directories into a sorted, de-duplicated list of supported files."""
+def _within(path: Path, roots: Iterable[Path]) -> bool:
+    return any(path == r or path.is_relative_to(r) for r in roots)
+
+
+def _resolved(paths: Iterable[str | Path] | None) -> list[Path]:
+    out = []
+    for p in paths or ():
+        try:
+            out.append(Path(p).expanduser().resolve())
+        except OSError:
+            continue
+    return out
+
+
+def _is_link(path: Path) -> bool:
+    """Symlinks and (on Windows) directory junctions."""
+    try:
+        return path.is_symlink() or path.is_junction()
+    except (AttributeError, OSError):  # is_junction: Python 3.12+
+        return path.is_symlink()
+
+
+def discover(
+    paths: Iterable[str | Path],
+    recursive: bool = True,
+    exclude: Iterable[str | Path] | None = None,
+    allow: Iterable[str | Path] | None = None,
+    skipped: dict[str, str] | None = None,
+) -> list[Path]:
+    """Expand files/directories into a sorted, de-duplicated list of supported files.
+
+    * Files under any ``exclude`` directory (OmniRAG's own data directory) are
+      never returned, unless they are also under an ``allow`` directory.
+    * Folder walks do not follow symlinks or junctions that lead outside the
+      folder, and skip special files (sockets, FIFOs, devices).
+    * Explicitly named files that cannot be ingested are recorded in
+      ``skipped`` (path -> reason) instead of being dropped silently.
+    """
+    excluded = _resolved(exclude)
+    allowed = _resolved(allow)
+    skipped = skipped if skipped is not None else {}
     found: dict[str, Path] = {}
+
+    def blocked(path: Path) -> bool:
+        return _within(path, excluded) and not _within(path, allowed)
+
     for raw in paths:
+        if not str(raw).strip():
+            raise ValueError("empty path: name a file or folder to ingest")
         p = Path(raw).expanduser()
         if not p.exists():
             raise FileNotFoundError(f"path not found: {raw}")
+        resolved = p.resolve()
         if p.is_file():
             # Explicitly named files are always ingested (if supported).
-            if detect_modality(p) is not None:
-                found[str(p.resolve())] = p.resolve()
+            if blocked(resolved):
+                skipped[str(resolved)] = "inside the OmniRAG data directory"
+            elif detect_modality(p) is None:
+                skipped[str(resolved)] = f"unsupported file type: {p.suffix or p.name}"
+            else:
+                found[str(resolved)] = resolved
             continue
-        iterator = p.rglob("*") if recursive else p.glob("*")
-        for f in iterator:
-            if not f.is_file():
-                continue
-            rel_parts = f.relative_to(p).parts
-            if any(part in IGNORED_DIRS or part.startswith(".") for part in rel_parts[:-1]):
-                continue
-            if f.name.startswith("."):
-                continue
-            if detect_modality(f) is None or is_sidecar(f):
-                continue
-            try:
-                if f.stat().st_size > MAX_FILE_BYTES:
+        if not p.is_dir():
+            skipped[str(resolved)] = "not a regular file or folder"
+            continue
+        if blocked(resolved):
+            skipped[str(resolved)] = "inside the OmniRAG data directory"
+            continue
+        for dirpath, dirnames, filenames in os.walk(resolved):
+            here = Path(dirpath)
+            keep = []
+            for d in dirnames:
+                sub = here / d
+                if d in IGNORED_DIRS or d.startswith(".") or not recursive:
                     continue
-            except OSError:
-                continue
-            found[str(f.resolve())] = f.resolve()
+                if _is_link(sub):
+                    # Never walked: a link inside the folder points at files that
+                    # are reached directly anyway, and one leading outside (or
+                    # back up, in a loop) must not be followed.
+                    if not _within(sub.resolve(), [resolved]):
+                        skipped[str(sub)] = "link to a folder outside the ingested folder"
+                    continue
+                if blocked(sub.resolve()):
+                    continue
+                keep.append(d)
+            dirnames[:] = sorted(keep)
+            for name in filenames:
+                if name.startswith("."):
+                    continue
+                f = here / name
+                try:
+                    real = f.resolve()
+                    st = real.stat()
+                except OSError:
+                    continue
+                if not stat.S_ISREG(st.st_mode):
+                    continue  # sockets, FIFOs, devices
+                if not _within(real, [resolved]):
+                    skipped[str(f)] = "link to a file outside the ingested folder"
+                    continue
+                if blocked(real) or detect_modality(real) is None or is_sidecar(real):
+                    continue
+                if st.st_size > MAX_FILE_BYTES:
+                    continue
+                found[str(real)] = real
     return sorted(found.values(), key=lambda x: str(x).lower())
 
 
@@ -136,9 +214,16 @@ class IngestionPipeline:
         doc.chunks = [c for c in doc.chunks if c.content.strip()]
         return doc
 
-    def prepare(self, paths: Iterable[str | Path], recursive: bool = True) -> list[Path]:
+    def prepare(
+        self,
+        paths: Iterable[str | Path],
+        recursive: bool = True,
+        exclude: Iterable[str | Path] | None = None,
+        allow: Iterable[str | Path] | None = None,
+        skipped: dict[str, str] | None = None,
+    ) -> list[Path]:
         paths = list(paths)
-        files = discover(paths, recursive=recursive)
+        files = discover(paths, recursive=recursive, exclude=exclude, allow=allow, skipped=skipped)
         dirs = [Path(p).resolve() for p in paths if Path(p).is_dir()]
         if len(dirs) == 1 and self.ctx.root is None:
             self.ctx.root = dirs[0]

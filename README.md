@@ -71,6 +71,7 @@ make serve     # the web app on the demo knowledge base
 | Method | Command |
 | ------ | ------- |
 | pip, from GitHub | `pip install "omnirag[server,pdf,images] @ git+https://github.com/Manas-thakur/omnirag"` |
+| pip, pinned to a release | `pip install "omnirag[server,pdf,images] @ git+https://github.com/Manas-thakur/omnirag@v0.3.0"` |
 | uv tool | `uv tool install "omnirag[server,pdf,images] @ git+https://github.com/Manas-thakur/omnirag"` |
 | Release wheel | download from [Releases](https://github.com/Manas-thakur/omnirag/releases), then `pip install "omnirag-0.3.0-py3-none-any.whl[server,pdf,images]"` |
 | Docker | `docker run --rm -p 8000:8000 -v omnirag-data:/data ghcr.io/manas-thakur/omnirag:latest` |
@@ -154,6 +155,7 @@ are stored with each knowledge base.
 | `OMNIRAG_API_KEY` | unset | require a key on `/api/*` |
 | `OMNIRAG_CORS_ORIGINS` | unset | browser origins allowed to call the API |
 | `OMNIRAG_MAX_UPLOAD_MB` | `50` | per-file upload limit |
+| `OMNIRAG_INGEST_ROOTS` | working directory | folders `POST /api/ingest` may read from (`:`-separated; `;` on Windows) |
 
 All variables, including chunking, timeouts and Whisper:
 [Configuration](https://manas-thakur.github.io/omnirag/docs/reference/configuration/).

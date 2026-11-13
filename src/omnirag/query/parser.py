@@ -163,6 +163,11 @@ def detect_intent(text: str) -> QueryIntent:
 
 class QueryParser:
     def parse(self, query: str) -> ParsedQuery:
+        """Split ``query`` into filters and free text.
+
+        Raises :class:`ValueError` for an inline ``modality:`` filter naming an
+        unknown modality.
+        """
         tokens = [t.replace('"', "") for t in _TOKEN_RE.findall(query)]
         phrases = [p.strip() for p in re.findall(r'"([^"]+)"', query) if p.strip()]
         filters = SearchFilters()
@@ -178,11 +183,9 @@ class QueryParser:
             canonical = _FILTER_KEYS.get(key)
             values = [v.strip() for v in value.split(",") if v.strip()]
             if canonical == "modality":
-                try:
-                    mods = [Modality.parse(v) for v in values]
-                except ValueError:
-                    free.append(tok)
-                    continue
+                # Same rule as the --modality option: an unknown value is an
+                # error, not a filter that silently disappears.
+                mods = [Modality.parse(v) for v in values]
                 if negate:
                     filters.exclude_modalities = [*(filters.exclude_modalities or []), *mods]
                 else:

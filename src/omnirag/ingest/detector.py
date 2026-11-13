@@ -10,7 +10,8 @@ TEXT_EXTENSIONS = {".txt", ".md", ".markdown", ".mdx", ".rst", ".html", ".htm", 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".svg"}
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".opus"}
 TRANSCRIPT_EXTENSIONS = {".vtt", ".srt"}
-_SNIFFABLE_SUFFIXES = {".text", ".log", ".cfg", ".ini", ".toml", ".yaml", ".yml"}
+#: Plain-text formats without a dedicated ingestor, read as text when the file is UTF-8.
+SNIFFABLE_EXTENSIONS = {".text", ".log", ".cfg", ".ini", ".toml", ".yaml", ".yml"}
 TABLE_EXTENSIONS = {".csv", ".tsv", ".json", ".jsonl", ".ndjson"}
 
 CODE_LANGUAGES: dict[str, str] = {
@@ -91,7 +92,7 @@ def _head(path: Path, size: int = 2048) -> str | None:
 
 def _sniff(path: Path) -> Modality | None:
     """Files without a known extension: treat readable UTF-8 text as text/code."""
-    if path.suffix and path.suffix.lower() not in _SNIFFABLE_SUFFIXES:
+    if path.suffix and path.suffix.lower() not in SNIFFABLE_EXTENSIONS:
         return None
     head = _head(path)
     if head is None or not head.strip():
