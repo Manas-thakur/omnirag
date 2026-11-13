@@ -5,7 +5,7 @@
 // http(s)/mailto URLs. The output therefore contains only the tags created
 // here. Supported: paragraphs, headings, fenced code, inline code, bold,
 // italic, links, block quotes, ordered/unordered lists, simple tables,
-// horizontal rules and [n] citation chips.
+// horizontal rules and [n] citation groups.
 
 const ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 
@@ -33,10 +33,11 @@ function inline(text, cite) {
       `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${inline(label, null)}</a>`,
     );
   });
-  // Citations: [1], [2, 3], [1][2]
+  // Citations: [1], [2, 3] and runs like [1][2] become one group, so the
+  // caller can render a single pill ("auth.md +1") per group.
   if (cite) {
-    s = s.replace(/\[(\d{1,3}(?:\s*,\s*\d{1,3})*)\]/g, (_, nums) =>
-      keep(nums.split(",").map((n) => cite(Number(n.trim()))).join("")),
+    s = s.replace(/(?:\[\d{1,3}(?:\s*,\s*\d{1,3})*\])+/g, (group) =>
+      keep(cite([...group.matchAll(/\d{1,3}/g)].map((m) => Number(m[0])))),
     );
   }
   s = escapeHtml(s);
@@ -55,7 +56,7 @@ const splitRow = (line) =>
 /**
  * Render Markdown to HTML.
  * @param {string} text
- * @param {{cite?: (n: number) => string}} [opts] cite renders a citation chip.
+ * @param {{cite?: (nums: number[]) => string}} [opts] cite renders one citation group.
  */
 export function renderMarkdown(text, opts = {}) {
   const cite = opts.cite || null;

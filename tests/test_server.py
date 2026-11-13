@@ -323,6 +323,76 @@ def test_query_stream_with_llm_and_errors(client, corpus, monkeypatch):
     assert client.post("/api/query/stream", json={"query": "x", "llm": "bogus"}).status_code == 400
 
 
+def _doc_id(client, name: str) -> str:
+    docs = client.get("/api/kbs/demo/documents").json()
+    return next(d["doc_id"] for d in docs if d["name"] == name)
+
+
+def test_query_scoped_to_selected_documents(client, corpus):
+    client.post("/api/ingest", json={"paths": [str(corpus)], "kb": "demo"})
+    rate = _doc_id(client, "rate-limiting.md")
+    code = _doc_id(client, "rate_limiter.py")
+
+    # Unscoped, this question is answered from the authentication docs.
+    body = {"query": "How do refresh tokens work?", "top_k": 4}
+    free = client.post("/api/query", json=body).json()
+    assert any(s["doc_id"] not in {rate, code} for s in free["sources"])
+
+    scoped = client.post("/api/query", json={**body, "doc_ids": [rate, code]}).json()
+    assert scoped["sources"]
+    assert {s["doc_id"] for s in scoped["sources"]} <= {rate, code}
+    assert scoped["query"]["filters"]["doc_ids"] == [rate, code]
+
+    with client.stream("POST", "/api/query/stream", json={**body, "doc_ids": [rate]}) as r:
+        events = sse_events("".join(r.iter_text()))
+    assert {s["doc_id"] for s in events[0][1]["sources"]} == {rate}
+    assert events[-1][0] == "done"
+    assert {s["doc_id"] for s in events[-1][1]["sources"]} == {rate}
+
+    # Ids that exist nowhere simply match nothing; malformed ids are rejected.
+    none = client.post("/api/query", json={**body, "doc_ids": ["0" * 16]}).json()
+    assert none["sources"] == []
+    bad = client.post("/api/query", json={**body, "doc_ids": ["../etc"]})
+    assert bad.status_code == 400 and "doc_ids" in bad.json()["detail"]
+    bad = client.post("/api/query/stream", json={**body, "doc_ids": ["a b"]})
+    assert bad.status_code == 400
+
+
+def test_related_questions(client, corpus):
+    client.post("/api/ingest", json={"paths": [str(corpus)], "kb": "demo"})
+
+    starters = client.post("/api/kbs/demo/related", json={"limit": 5}).json()["questions"]
+    assert len(starters) == 5
+    assert len({q["doc_id"] for q in starters}) == 5  # one per document
+    assert len({q["modality"] for q in starters}) >= 4  # spread across modalities
+    assert all(q["question"] and q["source"] for q in starters)
+
+    question = "How do refresh tokens work?"
+    answer = client.post("/api/query", json={"query": question, "top_k": 4}).json()
+    used = [s["chunk_id"] for s in answer["sources"]]
+    related = client.post(
+        "/api/kbs/demo/related", json={"query": question, "chunk_ids": used}
+    ).json()["questions"]
+    assert 1 <= len(related) <= 4
+    assert not {q["chunk_id"] for q in related} & set(used)
+    # The first suggestion is a sibling section of the document the answer used.
+    auth = _doc_id(client, "authentication.md")
+    assert related[0]["doc_id"] == auth
+    assert related[0]["question"] == "What does Authentication say about roles?"
+    assert len({q["question"] for q in related}) == len(related)
+
+    rate = _doc_id(client, "rate-limiting.md")
+    scoped = client.post(
+        "/api/kbs/demo/related",
+        json={"query": "limits", "chunk_ids": used, "doc_ids": [rate]},
+    ).json()["questions"]
+    assert scoped and all(q["doc_id"] == rate for q in scoped)
+
+    assert client.post("/api/kbs/demo/related", json={"chunk_ids": ["x/y"]}).status_code == 400
+    assert client.post("/api/kbs/demo/related", json={"limit": 0}).status_code == 422
+    assert client.post("/api/kbs/nope/related", json={}).status_code == 404
+
+
 # ------------------------------------------------------------------ status
 def test_status_extractive(client):
     s = client.get("/api/status").json()

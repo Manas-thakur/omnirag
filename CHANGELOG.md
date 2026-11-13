@@ -6,6 +6,26 @@ All notable changes to OmniRAG are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Answer page redesign** in the web app: each question heads its own block with Answer,
+  Sources and Media tabs, a strip of source cards above the answer (cited first), citation
+  pills that show the source's file name with a hover/focus preview, progress steps while
+  streaming that collapse into a one-line summary, and "Related" follow-up questions. The
+  empty chat is a home screen with a large composer and starter questions.
+- **Scoped chats**: tick documents in a Sources panel or in the library to restrict answers to
+  them; `POST /api/query` and `/api/query/stream` accept `doc_ids`.
+- `POST /api/kbs/{name}/related`: follow-up and starter questions phrased offline from section
+  headings, code symbols, table titles and transcript timestamps.
+- `Ctrl K` / `⌘ K` command palette, a keyboard shortcuts sheet (`?`) and single-key shortcuts.
+- `docs/design/references.md`: the design references and what was adopted from each.
+
+### Changed
+
+- Calmer visual system: one accent colour, hairline borders, a 4/8px spacing scale, a serif
+  reading face for answers, and motion of 200ms or less that respects reduced-motion settings.
+  Source previews and the Sources panel become bottom sheets on phones.
+
 ## [0.2.0] - 2026-11-13
 
 ### Added

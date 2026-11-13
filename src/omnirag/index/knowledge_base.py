@@ -517,6 +517,7 @@ def _query_info(retrieved: RetrievalResult, mode: str) -> dict[str, Any]:
             "modalities": [m.value for m in (filters.modalities or [])],
             "exclude_modalities": [m.value for m in (filters.exclude_modalities or [])],
             "sources": filters.sources or [],
+            "doc_ids": filters.doc_ids or [],
             "metadata": filters.metadata,
         },
         "mode": mode,

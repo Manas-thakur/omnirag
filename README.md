@@ -20,10 +20,11 @@ endpoint when you want an LLM to write the answer.
   lexical reranker, MMR de-duplication and neighbouring-chunk context.
 - **Answers with checked citations**: every claim carries `[n]`; citations that point at
   nothing are removed. Works offline (extractive) or with Ollama / any OpenAI-compatible LLM.
-- **Web app**: knowledge-base management, streaming chat with citation chips and a source
-  panel (highlighted chunk, images, code with line numbers), a document library with
-  drag-and-drop upload, per-knowledge-base model settings and a live status check. Light and
-  dark themes, works on a phone, no build step.
+- **Web app**: answers with a source-card strip, citation pills that name the source (hover
+  for the excerpt), Answer / Sources / Media tabs, live progress steps and offline "Related"
+  follow-ups; tick documents to scope the chat to them; a `Ctrl K` command palette and
+  keyboard shortcuts; a document library with drag-and-drop upload; per-knowledge-base model
+  settings and a live status check. Light and dark themes, works on a phone, no build step.
 - **API and CLI**: FastAPI server with server-sent-event streaming, upload, document and
   settings endpoints; `omnirag` CLI for ingesting, querying and `omnirag doctor`.
 - **Safe to expose with care**: optional API key, opt-in CORS, upload size and type limits,
@@ -33,15 +34,16 @@ endpoint when you want an LLM to write the answer.
 
 ## Screenshots
 
-Chat with a streamed, cited answer and the source panel open (light theme):
+An answer with its source strip, citation pills and the preview card of a hovered citation
+(light theme):
 
-![Chat view with citations and the source preview panel](https://raw.githubusercontent.com/Manas-thakur/omnirag/main/docs/screenshots/chat.png)
+![Chat view: the question, Answer/Sources/Media tabs, source cards above the answer and a citation preview card](https://raw.githubusercontent.com/Manas-thakur/omnirag/main/docs/screenshots/chat.png)
 
-The library: upload, search, re-ingest and delete documents (dark theme):
+The library with two documents ticked, which scopes the chat to them (dark theme):
 
-![Library view with the document table](https://raw.githubusercontent.com/Manas-thakur/omnirag/main/docs/screenshots/library.png)
+![Library view with two documents selected as the chat scope](https://raw.githubusercontent.com/Manas-thakur/omnirag/main/docs/screenshots/library.png)
 
-<img alt="Chat on a phone-sized screen" src="https://raw.githubusercontent.com/Manas-thakur/omnirag/main/docs/screenshots/mobile.png" width="300">
+<img alt="An answer on a phone-sized screen with the horizontally scrolling source strip" src="https://raw.githubusercontent.com/Manas-thakur/omnirag/main/docs/screenshots/mobile.png" width="300">
 
 The screenshots are captures of the bundled demo corpus with the offline extractive answerer.
 
@@ -295,22 +297,39 @@ Bring your own LLM by subclassing `omnirag.generate.LLM` (implement `complete()`
 and JavaScript (`src/omnirag/server/static/`): no Node toolchain, no build step and no CDN
 scripts, so it works offline.
 
-- **Sidebar**: knowledge bases (create, switch, delete with confirmation), the conversations
-  of the active knowledge base (kept in the browser's local storage) and a model status
-  indicator.
-- **Chat**: answers stream in over server-sent events and can be stopped. Markdown is rendered
-  by a small built-in renderer that escapes everything first, so model output cannot inject
-  HTML. `[n]` chips open the source panel: the cited chunk is highlighted together with its
-  neighbours, images are displayed, and code is shown with its real line numbers. Modality chips
-  limit the sources; inline filters such as `source:*.py` also work. Answers can be copied.
-- **Library**: drag-and-drop or file-picker upload into the active knowledge base with per-file
-  progress and results, and a searchable document table (name, type, chunks, size, ingested)
-  with re-ingest and delete.
+- **Sidebar**: knowledge bases (create, switch, delete with confirmation), recent
+  conversations of the active knowledge base (kept in the browser's local storage) and a model
+  status indicator.
+- **Home**: an empty chat shows "Ask &lt;kb&gt; anything" with a large composer and starter
+  questions drawn from the knowledge base; after the first question the composer docks at the
+  bottom.
+- **Answers**: each question heads its own block with **Answer · Sources · Media** tabs (Media
+  only when images were retrieved). Progress steps (searching, reading, writing) collapse into
+  "Answered from K sources in 0.4s", expandable to timings. A strip of source cards (file,
+  section / lines / rows / timestamp, image thumbnails; cited first) sits above the text, which
+  is set in a reading face in a narrow column. Citations render as pills with the source's file
+  name ("auth.md +1"); hovering or focusing one shows the excerpt, clicking opens the source
+  panel with the chunk highlighted among its neighbours, images displayed and code shown with
+  real line numbers. "Related" questions are suggested offline from neighbouring sections.
+  Answers stream over server-sent events and can be stopped or copied (with their source list);
+  Markdown is rendered by a small built-in renderer that escapes everything first, so model
+  output cannot inject HTML.
+- **Scoping**: tick documents in the **Sources** panel (top-bar button, or `S`) or in the
+  library; questions then only search those documents and a "Scoped to N sources" chip appears
+  above the composer. Modality chips and inline filters such as `source:*.py` still work.
+- **Library**: drag-and-drop or file-picker upload with per-file progress, and a filterable
+  document table (name, type, chunks, size, ingested) with selection, re-ingest and delete.
 - **Settings**: LLM backend (server default, none, Ollama, OpenAI-compatible), model, base URL
   and top-k, saved per knowledge base; the embedder in use and whether the model endpoint is
   reachable; theme (system, light, dark); API key.
-- Keyboard: `/` focuses the question box, `Enter` sends, `Shift+Enter` adds a line, `Esc` stops
-  generation or closes the source panel and menus.
+- **Keyboard**: `Ctrl K` / `⌘ K` opens a command palette (new chat, switch knowledge base, open
+  a document, go to a view, choose or clear sources, toggle theme); `?` lists shortcuts; `/`
+  focuses the question box; `N` starts a new chat; `G` then `C` / `L` / `S` switches views;
+  `Esc` stops generation or closes panels.
+
+The interaction patterns follow Perplexity's answer page, NotebookLM's source selection and
+Linear's app shell; [docs/design/references.md](docs/design/references.md) lists what was
+adopted from each and why.
 
 > The original plan called for a TypeScript CLI and a React web UI. They were replaced by the
 > Python CLI and this no-build app to keep the project a single installable package.
@@ -333,9 +352,10 @@ is set, send it as `X-API-Key: <key>` (or `Authorization: Bearer <key>`) on ever
 | `POST /api/kbs/{name}/upload` | multipart `files` (one or more); stored in the KB's `uploads/` folder and ingested; returns per-file status |
 | `DELETE /api/kbs/{name}/documents/{doc_id}` | remove a document (and its uploaded file, if it was uploaded) |
 | `POST /api/kbs/{name}/documents/{doc_id}/reingest` | re-parse and re-embed one document |
-| `POST /api/query` | `{"query", "kb", "top_k", "llm", "modalities", "sources", "mode", "neighbors"}` → answer, cited ids, sources, timings |
+| `POST /api/query` | `{"query", "kb", "top_k", "llm", "modalities", "sources", "doc_ids", "mode", "neighbors"}` → answer, cited ids, sources, timings; `doc_ids` restricts retrieval to those documents |
 | `POST /api/query/stream` | same body; `text/event-stream` with `sources`, `delta` (`{"text"}`) …, then `done` (the full answer) or `error` |
 | `POST /api/ingest` | `{"paths": [...], "kb", "recursive", "force"}` (paths on the server's filesystem) |
+| `POST /api/kbs/{name}/related` | `{"query", "chunk_ids", "doc_ids", "limit"}` → follow-up questions phrased offline from the headings, symbols and titles of the documents those chunks belong to; without `chunk_ids`, starter questions across the knowledge base |
 | `GET /api/kbs/{name}/chunks/{chunk_id}?window=1` | chunk with neighbours (source preview) |
 | `GET /api/kbs/{name}/documents/{doc_id}/raw` | original file of a registered document, served inert |
 

@@ -39,6 +39,7 @@ from omnirag.ingest.detector import (
     TEXT_EXTENSIONS,
     TRANSCRIPT_EXTENSIONS,
 )
+from omnirag.server.related import related_questions
 from omnirag.server.security import (
     API_KEY_HEADER,
     APIKeyMiddleware,
@@ -88,8 +89,17 @@ class QueryRequest(BaseModel):
     llm: str | None = None
     modalities: list[str] | None = None
     sources: list[str] | None = None
+    #: Restrict retrieval to these documents (a "scoped" chat).
+    doc_ids: list[str] | None = Field(None, max_length=1000)
     mode: str = "hybrid"
     neighbors: int = Field(1, ge=0, le=3)
+
+
+class RelatedRequest(BaseModel):
+    query: str = Field("", max_length=4000)
+    chunk_ids: list[str] = Field(default_factory=list, max_length=100)
+    doc_ids: list[str] | None = Field(None, max_length=1000)
+    limit: int = Field(4, ge=1, le=10)
 
 
 class IngestRequest(BaseModel):
@@ -256,7 +266,15 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if req.sources:
             filters.sources = req.sources
+        if req.doc_ids:
+            filters.doc_ids = check_ids(req.doc_ids, "doc_ids")
         return None if filters.is_empty() else filters
+
+    def check_ids(ids: list[str], field: str) -> list[str]:
+        bad = [i for i in ids if not _ID_RE.match(i)]
+        if bad:
+            raise HTTPException(status_code=400, detail=f"invalid {field}: {bad[0][:80]!r}")
+        return list(dict.fromkeys(ids))
 
     # ------------------------------------------------------------------- page
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
@@ -546,6 +564,30 @@ def create_app(
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    @app.post("/api/kbs/{name}/related")
+    def related(name: str, req: RelatedRequest) -> dict[str, Any]:
+        """Follow-up questions phrased offline from the sources' headings and symbols.
+
+        With ``chunk_ids`` (the chunks an answer used) the questions point at
+        nearby sections of the same documents; without them they are starter
+        questions across the knowledge base. ``doc_ids`` keeps them in scope.
+        """
+        kb = get_kb(name)
+        chunk_ids = check_ids(req.chunk_ids, "chunk_ids")
+        doc_ids = check_ids(req.doc_ids, "doc_ids") if req.doc_ids else None
+        nearby = []
+        if req.query.strip() and chunk_ids:
+            scope = SearchFilters(doc_ids=doc_ids) if doc_ids else None
+            try:
+                found = kb.search(req.query, k=req.limit * 3, filters=scope, neighbors=0)
+                nearby = [r.chunk for r in found.results]
+            except ValueError:
+                nearby = []
+        questions = related_questions(
+            kb.store, req.query, chunk_ids, doc_ids, req.limit, nearby=nearby
+        )
+        return {"questions": questions}
 
     @app.get("/api/kbs/{name}/chunks/{chunk_id}")
     def chunk(name: str, chunk_id: str, window: int = 1) -> dict[str, Any]:
