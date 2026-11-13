@@ -6,6 +6,8 @@ All notable changes to OmniRAG are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-13
+
 ### Changed
 
 - **Offline answers are held to a relevance floor.** The extractive answerer weighs question

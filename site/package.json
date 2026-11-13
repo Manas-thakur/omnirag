@@ -1,7 +1,7 @@
 {
   "name": "omnirag-site",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "OmniRAG landing page and documentation (Astro + Starlight).",
   "type": "module",
   "packageManager": "pnpm@10.34.5",

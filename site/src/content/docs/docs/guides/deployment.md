@@ -53,7 +53,7 @@ were ingested: every document would look missing and prune would remove them all
 ## Without Docker
 
 ```bash
-pip install "omnirag[server,pdf,images] @ git+https://github.com/Manas-thakur/omnirag@v0.3.0"
+pip install "omnirag[server,pdf,images] @ git+https://github.com/Manas-thakur/omnirag@v0.3.1"
 OMNIRAG_API_KEY=change-me omnirag serve --host 0.0.0.0 --port 8000 --kb team
 ```
 

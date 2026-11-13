@@ -1,7 +1,7 @@
 {
   "name": "omnirag-web",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "OmniRAG web app (Vite + React + Tailwind CSS + shadcn/ui). Built into src/omnirag/server/static.",
   "type": "module",
   "packageManager": "pnpm@10.34.5",

@@ -71,7 +71,7 @@ make serve     # the web app on the demo knowledge base
 | Method | Command |
 | ------ | ------- |
 | pip, from GitHub | `pip install "omnirag[server,pdf,images] @ git+https://github.com/Manas-thakur/omnirag"` |
-| pip, pinned to a release | `pip install "omnirag[server,pdf,images] @ git+https://github.com/Manas-thakur/omnirag@v0.3.0"` |
+| pip, pinned to a release | `pip install "omnirag[server,pdf,images] @ git+https://github.com/Manas-thakur/omnirag@v0.3.1"` |
 | uv tool | `uv tool install "omnirag[server,pdf,images] @ git+https://github.com/Manas-thakur/omnirag"` |
 | Release wheel | download from [Releases](https://github.com/Manas-thakur/omnirag/releases), then `pip install "omnirag-0.3.0-py3-none-any.whl[server,pdf,images]"` |
 | Docker | `docker run --rm -p 8000:8000 -v omnirag-data:/data ghcr.io/manas-thakur/omnirag:latest` |

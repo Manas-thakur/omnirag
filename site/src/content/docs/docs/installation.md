@@ -13,7 +13,7 @@ pre-built inside the package, so no Node.js toolchain is needed to run it.
 pip install "omnirag[server,pdf,images] @ git+https://github.com/Manas-thakur/omnirag"
 
 # The same, pinned to a release tag
-pip install "omnirag[server,pdf,images] @ git+https://github.com/Manas-thakur/omnirag@v0.3.0"
+pip install "omnirag[server,pdf,images] @ git+https://github.com/Manas-thakur/omnirag@v0.3.1"
 
 # From a downloaded release wheel (GitHub Releases page)
 pip install "omnirag-0.3.0-py3-none-any.whl[server,pdf,images]"
@@ -43,7 +43,7 @@ checks as JSON.
 ## With uv
 
 ```bash
-# As a standalone tool on your PATH (append @v0.3.0 to pin a release)
+# As a standalone tool on your PATH (append @v0.3.1 to pin a release)
 uv tool install "omnirag[server,pdf,images] @ git+https://github.com/Manas-thakur/omnirag"
 
 # Or run once without installing
@@ -73,7 +73,7 @@ non-root user and keeps its data in `/data`.
 docker run --rm -p 8000:8000 -v omnirag-data:/data ghcr.io/manas-thakur/omnirag:latest
 ```
 
-Then open `http://localhost:8000`. Pin a version with a tag such as `:0.3.0` or `:0.3`.
+Then open `http://localhost:8000`. Pin a version with a tag such as `:0.3.1` or `:0.3`.
 To build the image yourself from a checkout:
 
 ```bash
