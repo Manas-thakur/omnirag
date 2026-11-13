@@ -275,7 +275,7 @@ def query(
         True, "--sources/--no-sources", help="Print the source list."
     ),
 ) -> None:
-    """Ask a question and get an answer with [n] citations."""
+    r"""Ask a question and get an answer with \[n] citations."""
     settings = Settings.from_env()
     llm_name = llm or settings.llm
     try:

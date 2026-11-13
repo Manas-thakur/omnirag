@@ -17,7 +17,7 @@ from omnirag.generate import Answer, Source
 from omnirag.index import IndexManager, IngestReport, KnowledgeBase, KnowledgeBaseError
 from omnirag.store import Chunk, Document, Modality, ScoredChunk, SearchFilters
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "Answer",

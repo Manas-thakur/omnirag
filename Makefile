@@ -1,4 +1,4 @@
-.PHONY: install test lint format demo demo-cli serve docker clean
+.PHONY: install test lint format demo demo-cli serve docker clean web web-dev site site-dev docs-cli
 
 install:  ## Create the virtualenv with dev, server, pdf and image extras
 	uv sync --extra server --extra pdf --extra images
@@ -28,3 +28,18 @@ docker:
 
 clean:
 	rm -rf examples/.data .pytest_cache .ruff_cache dist build
+
+web:  ## Type-check, lint, test and build the web app into src/omnirag/server/static
+	cd web && pnpm install && pnpm typecheck && pnpm lint && pnpm test && pnpm build
+
+web-dev:  ## Vite dev server on :8752 (proxies /api to :8751)
+	cd web && pnpm dev
+
+site:  ## Build the landing page and docs into site/dist
+	cd site && pnpm install && pnpm build
+
+site-dev:
+	cd site && pnpm dev
+
+docs-cli:  ## Regenerate the CLI reference page from the CLI
+	uv run python scripts/gen_cli_docs.py

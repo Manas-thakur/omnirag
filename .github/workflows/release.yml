@@ -1,8 +1,8 @@
 name: Release
 
-# Push a tag like v0.2.0 to build the sdist and wheel, publish a GitHub Release
+# Push a tag like v0.3.0 to build the web app, the sdist and wheel, publish a GitHub Release
 # with both attached, push a multi-arch image to ghcr.io and (optionally) publish
-# to PyPI. See "Releasing" in README.md.
+# to PyPI. See "Releases" in CONTRIBUTING.md.
 
 on:
   push:
@@ -33,11 +33,28 @@ jobs:
           tag="${GITHUB_REF_NAME#v}"
           project=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
           module=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/omnirag/__init__.py)
-          echo "tag=$tag pyproject=$project module=$module"
-          if [ "$tag" != "$project" ] || [ "$tag" != "$module" ]; then
-            echo "::error::tag v$tag does not match pyproject ($project) / __version__ ($module)"
+          web=$(python3 -c "import json; print(json.load(open('web/package.json'))['version'])")
+          echo "tag=$tag pyproject=$project module=$module web=$web"
+          if [ "$tag" != "$project" ] || [ "$tag" != "$module" ] || [ "$tag" != "$web" ]; then
+            echo "::error::tag v$tag does not match pyproject ($project) / __version__ ($module) / web/package.json ($web)"
             exit 1
           fi
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      # The web app is built from source so the wheel never ships a stale UI.
+      - name: Build the web app
+        working-directory: web
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+      - name: Built web app matches the committed one
+        run: git diff --exit-code --stat src/omnirag/server/static
       - name: Install
         run: uv sync --locked --extra server --extra pdf --extra images
       - name: Test

@@ -1,4 +1,7 @@
-"""FastAPI server: JSON API, an SSE answer stream and a no-build web UI.
+"""FastAPI server: JSON API, an SSE answer stream and the web app.
+
+The web app is a React build (sources in ``web/``) committed to ``static/``, so
+installing the package needs no Node toolchain.
 
 Security model: meant for local or trusted-network use. Set ``OMNIRAG_API_KEY``
 to require a key on every ``/api/*`` route (except ``/api/health``), and
@@ -71,10 +74,12 @@ _RESERVED_NAMES = {
     *(f"lpt{i}" for i in range(10)),
 }
 
-# The page loads only same-origin scripts; fonts may come from Google Fonts.
+# The page loads only same-origin scripts and self-hosted fonts. Inline styles
+# are allowed because UI libraries (toasts, drawers, scroll locking) inject
+# small <style> elements at runtime; scripts stay restricted to 'self'.
 PAGE_CSP = (
     "default-src 'self'; script-src 'self'; "
-    "style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; "
+    "style-src 'self' 'unsafe-inline'; font-src 'self'; "
     "img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; "
     "base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
 )
@@ -123,11 +128,20 @@ class PreferencesRequest(BaseModel):
 
 
 class _StaticFiles(StaticFiles):
-    """Static assets, revalidated on every load (cheap 304s) so upgrades show up."""
+    """Static assets of the web app.
 
-    def file_response(self, *args: Any, **kwargs: Any):
-        response = super().file_response(*args, **kwargs)
-        response.headers["Cache-Control"] = "no-cache"
+    Files under ``assets/`` have content hashes in their names and are cached
+    for a year; everything else is revalidated on every load (cheap 304s) so
+    upgrades show up.
+    """
+
+    async def get_response(self, path: str, scope: Any):
+        response = await super().get_response(path, scope)
+        if response.status_code < 400:
+            immutable = path.replace("\\", "/").startswith("assets/")
+            response.headers["Cache-Control"] = (
+                "public, max-age=31536000, immutable" if immutable else "no-cache"
+            )
         return response
 
 

@@ -29,6 +29,8 @@ jobs:
         run: uv run ruff check .
       - name: Ruff format
         run: uv run ruff format --check .
+      - name: CLI reference is up to date
+        run: uv run python scripts/gen_cli_docs.py --check
 
   test:
     name: Test (Python ${{ matrix.python-version }})
@@ -53,3 +55,40 @@ jobs:
           export OMNIRAG_HOME="$RUNNER_TEMP/omnirag"
           uv run omnirag ingest examples/corpus --kb demo
           uv run omnirag query "How does the rate limiter work?" --kb demo --llm none
+
+  web:
+    name: Web app (typecheck, lint, test, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Lint
+        run: pnpm lint
+      - name: Test
+        run: pnpm test
+      - name: Build
+        run: pnpm build
+      - name: Committed build is current
+        working-directory: .
+        run: |
+          git diff --exit-code src/omnirag/server/static
+          untracked=$(git status --porcelain --untracked-files=all src/omnirag/server/static)
+          if [ -n "$untracked" ]; then
+            echo "$untracked"
+            echo "::error::src/omnirag/server/static is out of date. Run 'pnpm --dir web build' and commit the result."
+            exit 1
+          fi

@@ -1,0 +1,973 @@
+---
+import { Image } from "astro:assets"
+import "../styles/fonts.css"
+import logo from "../assets/logo.svg?url"
+import chatLight from "../../../docs/screenshots/chat.png"
+import chatDark from "../../../docs/screenshots/chat-dark.png"
+import library from "../../../docs/screenshots/library.png"
+import preview from "../../../docs/screenshots/source-preview.png"
+import scope from "../../../docs/screenshots/scope.png"
+import mobile from "../../../docs/screenshots/mobile.png"
+import palette from "../../../docs/screenshots/palette.png"
+
+const repo = "https://github.com/Manas-thakur/omnirag"
+const base = import.meta.env.BASE_URL.replace(/\/$/, "")
+const link = (path: string) => `${base}/${path}`
+
+const steps = [
+  {
+    n: "01",
+    title: "Ingest",
+    body: "Point it at folders or drop files in the browser. Each file type has its own parser: Markdown by heading, Python by AST, tables by schema and rows, transcripts by timestamp, images by caption and metadata.",
+  },
+  {
+    n: "02",
+    title: "Embed",
+    body: "Chunks are embedded into one shared space. The default hashing embedder is deterministic and needs no downloads; sentence-transformers and Ollama embedders are one flag away.",
+  },
+  {
+    n: "03",
+    title: "Retrieve",
+    body: "Dense search and BM25 run side by side, merge with reciprocal rank fusion, get re-scored by a lexical reranker, de-duplicated with MMR and widened with neighbouring chunks.",
+  },
+  {
+    n: "04",
+    title: "Cite",
+    body: "Every claim carries a [n] marker that points at a numbered source. Citations to nothing are stripped. Without a model, an extractive answerer quotes the best sentences and cites each one.",
+  },
+]
+
+const features = [
+  {
+    title: "One index for every modality",
+    body: "Documents, code, tables, images and transcripts become text chunks in a single SQLite-backed index, searched with one query.",
+  },
+  {
+    title: "Hybrid retrieval, built from scratch",
+    body: "Dense vectors, BM25, RRF, a lexical reranker and MMR in small readable modules. No LangChain, no LlamaIndex.",
+  },
+  {
+    title: "Citations you can check",
+    body: "Citation pills name the file, a hover shows the passage, a click opens it with the surrounding chunks and real line numbers.",
+  },
+  {
+    title: "Offline by default",
+    body: "The embedder, index, reranker and extractive answerer need nothing beyond numpy. Add Ollama or any OpenAI-compatible endpoint for written answers.",
+  },
+  {
+    title: "Scope answers to documents",
+    body: "Tick documents in the Sources panel or the library, and retrieval only searches those. The scope is visible wherever you ask.",
+  },
+  {
+    title: "A web app, a CLI and an API",
+    body: "Streaming answers, a command palette, keyboard shortcuts and a document library; the same features from the omnirag CLI, a FastAPI server and Python.",
+  },
+  {
+    title: "Incremental re-ingestion",
+    body: "Files are keyed by path and content hash. Unchanged files are skipped, changed files are replaced atomically, embeddings are cached on disk.",
+  },
+  {
+    title: "Careful when exposed",
+    body: "Optional API key, opt-in CORS, upload size and type limits, sanitised file names and a strict Content Security Policy.",
+  },
+]
+
+const modalities = [
+  {
+    name: "Text",
+    color: "sky",
+    exts: ".md .markdown .mdx .txt .rst .html .htm .pdf",
+    how: "Split on headings with the heading path kept on every chunk; HTML converted to structured text; PDFs chunked per page (with the pdf extra).",
+  },
+  {
+    name: "Code",
+    color: "violet",
+    exts: ".py .js .ts .tsx .go .rs .java .c .cpp .cs .rb .php .kt .swift .scala .sh .sql .lua .r and more",
+    how: "Python parsed with ast into module, class and function chunks with signatures and docstrings; JS/TS declarations found by pattern; other languages in overlapping line windows.",
+  },
+  {
+    name: "Tables",
+    color: "emerald",
+    exts: ".csv .tsv .json .jsonl .ndjson",
+    how: "A summary chunk with column types and statistics, plus row chunks rendered as column=value so exact values are searchable.",
+  },
+  {
+    name: "Images",
+    color: "amber",
+    exts: ".png .jpg .jpeg .webp .gif .bmp .tif .tiff .svg",
+    how: "Described from an Ollama vision model if configured, a sidecar caption file, alt text that references the image, SVG text, PNG text chunks or EXIF.",
+  },
+  {
+    name: "Audio",
+    color: "rose",
+    exts: ".vtt .srt (and .mp3 .wav .flac .ogg .m4a .aac .opus)",
+    how: "Transcripts keep timestamps and speakers. Audio files use a sidecar transcript, or local transcription with faster-whisper (audio extra).",
+  },
+]
+
+const faqs = [
+  {
+    q: "Does it need a GPU, an API key or an internet connection?",
+    a: "No. The default pipeline is offline: a hashing embedder, BM25 and an extractive answerer that quotes your sources. A model is optional and only writes the final answer.",
+  },
+  {
+    q: "Which language models can write the answers?",
+    a: "Anything served by Ollama, and any endpoint that speaks the OpenAI /chat/completions API (OpenAI, vLLM, LM Studio, the llama.cpp server and others). Choose per knowledge base in Settings or with OMNIRAG_LLM.",
+  },
+  {
+    q: "Where is my data stored?",
+    a: "On the machine running OmniRAG, in one directory per knowledge base under OMNIRAG_HOME (default ~/.omnirag): a SQLite database, an embedding cache, uploaded files and settings. Chat history is kept in your browser.",
+  },
+  {
+    q: "How large can a knowledge base get?",
+    a: "Vector search is exact (a numpy matrix, no approximate index), which is comfortable for tens of thousands of chunks. Approximate indexes and external vector stores are on the roadmap, not in the code today.",
+  },
+  {
+    q: "Can I put it on a server for my team?",
+    a: "Yes, with care: set OMNIRAG_API_KEY, keep CORS off unless you need it, and run it behind your usual TLS proxy. The Docker image on ghcr.io runs as a non-root user with a data volume.",
+  },
+  {
+    q: "Does it read scanned PDFs or images with text in them?",
+    a: "Not yet. PDFs need a text layer; OCR is on the roadmap. Images are described from captions, alt text, metadata or an optional Ollama vision model.",
+  },
+  {
+    q: "Is it free?",
+    a: "Yes. OmniRAG is open source under the MIT license.",
+  },
+]
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>OmniRAG: cited answers from your documents, code, tables, images and transcripts</title>
+    <meta
+      name="description"
+      content="OmniRAG is an open-source, self-hosted RAG assistant. Ask questions across documents, code, tables, images and transcripts and get answers that cite the exact section, line range, rows or timestamp."
+    />
+    <link rel="icon" href={link("favicon.svg")} type="image/svg+xml" />
+    <link rel="canonical" href={new URL(link(""), Astro.site)} />
+    <meta property="og:title" content="OmniRAG" />
+    <meta property="og:description" content="Cited answers from your documents, code, tables, images and transcripts. Self-hosted, offline by default." />
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <header class="nav">
+      <div class="wrap nav-inner">
+        <a class="brand" href={link("")} aria-label="OmniRAG home">
+          <img src={logo} alt="" width="28" height="28" />
+          <span>OmniRAG</span>
+        </a>
+        <nav aria-label="Main">
+          <a href={link("docs/")}>Docs</a>
+          <a href={link("docs/quickstart/")} class="hide-sm">Quickstart</a>
+          <a href={`${repo}/releases`} class="hide-sm">Releases</a>
+          <a href={repo} class="gh">GitHub</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero">
+        <div class="wrap hero-inner">
+          <p class="eyebrow">Open source · MIT · Python 3.10+</p>
+          <h1>Ask your documents, code, tables, images and transcripts. Get answers that show their sources.</h1>
+          <p class="lead">
+            OmniRAG is a self-hosted retrieval-augmented assistant. It indexes every modality into one search space and answers
+            with citations to the section, line range, table rows or timestamp they came from. It runs fully offline; plug in
+            Ollama or any OpenAI-compatible model when you want written answers.
+          </p>
+          <div class="cta">
+            <a class="btn primary" href={link("docs/quickstart/")}>Get started</a>
+            <a class="btn" href={repo}>View on GitHub</a>
+          </div>
+          <div class="install" aria-label="Install command">
+            <code>pip install "omnirag[server,pdf,images] @ git+https://github.com/Manas-thakur/omnirag"</code>
+          </div>
+        </div>
+        <div class="wrap shot-wrap">
+          <figure class="frame">
+            <div class="frame-bar" aria-hidden="true"><span></span><span></span><span></span></div>
+            <Image
+              src={chatLight}
+              alt="The OmniRAG web app answering 'How does the rate limiter work?' with source cards above the answer, citation pills after each sentence and a hover card showing the cited passage."
+              class="only-light"
+              widths={[720, 1366]}
+              sizes="(max-width: 1100px) 100vw, 1100px"
+              loading="eager"
+            />
+            <Image
+              src={chatDark}
+              alt="The same answer view in the dark theme."
+              class="only-dark"
+              widths={[720, 1366]}
+              sizes="(max-width: 1100px) 100vw, 1100px"
+              loading="eager"
+            />
+          </figure>
+          <p class="caption">A real capture of the bundled demo corpus, answered offline by the extractive answerer.</p>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="how">
+        <div class="wrap">
+          <p class="eyebrow">How it works</p>
+          <h2 id="how">Ingest, embed, retrieve, cite</h2>
+          <p class="sub">Every stage is a small module in the repository, so you can read exactly what happens to your files.</p>
+          <ol class="steps">
+            {
+              steps.map((s) => (
+                <li class="step">
+                  <span class="step-n">{s.n}</span>
+                  <h3>{s.title}</h3>
+                  <p>{s.body}</p>
+                </li>
+              ))
+            }
+          </ol>
+        </div>
+      </section>
+
+      <section class="section alt" aria-labelledby="features">
+        <div class="wrap">
+          <p class="eyebrow">Features</p>
+          <h2 id="features">Built for answers you can verify</h2>
+          <div class="grid">
+            {
+              features.map((f) => (
+                <article class="card">
+                  <h3>{f.title}</h3>
+                  <p>{f.body}</p>
+                </article>
+              ))
+            }
+          </div>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="tour">
+        <div class="wrap">
+          <p class="eyebrow">The web app</p>
+          <h2 id="tour">Evidence one click away</h2>
+          <div class="tour">
+            <figure>
+              <Image src={preview} alt="The source preview panel showing the cited passage with the chunks before and after it." widths={[640, 1366]} sizes="(max-width: 900px) 100vw, 560px" />
+              <figcaption><strong>Source preview.</strong> Click a citation to read the passage in context, with code shown at its real line numbers.</figcaption>
+            </figure>
+            <figure>
+              <Image src={scope} alt="The Sources panel with two documents ticked and a 'Scoped to 2 sources' chip above the question box." widths={[640, 1366]} sizes="(max-width: 900px) 100vw, 560px" />
+              <figcaption><strong>Scoped chats.</strong> Tick documents and answers only search those, like a notebook of sources.</figcaption>
+            </figure>
+            <figure>
+              <Image src={library} alt="The document library with a drop zone, a filter box and a table of documents with type, chunks, size and ingest time." widths={[640, 1366]} sizes="(max-width: 900px) 100vw, 560px" />
+              <figcaption><strong>Library.</strong> Drag and drop uploads with progress, search, re-ingest and delete.</figcaption>
+            </figure>
+            <figure>
+              <Image src={palette} alt="The command palette listing actions, views and documents." widths={[640, 1366]} sizes="(max-width: 900px) 100vw, 560px" />
+              <figcaption><strong>Keyboard first.</strong> A command palette on Ctrl K / ⌘ K and single-key shortcuts for the common moves.</figcaption>
+            </figure>
+          </div>
+          <div class="mobile-row">
+            <Image src={mobile} alt="An answer on a 375-pixel-wide phone screen." widths={[375, 750]} sizes="300px" class="phone" />
+            <div>
+              <h3>Works on a phone</h3>
+              <p>
+                At 375px the sidebar becomes a sheet, previews and the source picker open as bottom drawers, and the source strip
+                scrolls sideways. Light and dark themes follow your system, with a manual toggle.
+              </p>
+              <a class="text-link" href={link("docs/guides/web-app/")}>Read the web app guide →</a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section alt" aria-labelledby="modalities">
+        <div class="wrap">
+          <p class="eyebrow">Modalities</p>
+          <h2 id="modalities">Text is the bridge</h2>
+          <p class="sub">Each modality is mapped into one shared search space by describing it in text, then chunked in the way that fits it.</p>
+          <div class="mods">
+            {
+              modalities.map((m) => (
+                <article class={`mod mod-${m.color}`}>
+                  <h3>{m.name}</h3>
+                  <p class="exts">{m.exts}</p>
+                  <p>{m.how}</p>
+                </article>
+              ))
+            }
+          </div>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="quickstart">
+        <div class="wrap qs">
+          <div>
+            <p class="eyebrow">Quickstart</p>
+            <h2 id="quickstart">From folder to cited answer in four commands</h2>
+            <p class="sub">
+              Works the same with <code>uv tool install</code>, from a git checkout, or in Docker. Everything below runs offline.
+            </p>
+            <a class="btn primary" href={link("docs/installation/")}>All install options</a>
+          </div>
+          <div class="term" role="region" aria-label="Example terminal session">
+            <pre><code><span class="c"># install the CLI, web app and PDF/image support</span>
+<span class="p">$</span> pip install "omnirag[server,pdf,images] @ git+https://github.com/Manas-thakur/omnirag"
+
+<span class="c"># index a folder into a knowledge base</span>
+<span class="p">$</span> omnirag ingest ./docs ./src --kb notes
+
+<span class="c"># ask from the terminal (offline, extractive)</span>
+<span class="p">$</span> omnirag query "How does the rate limiter work?" --kb notes
+
+<span class="c"># or open the web app on http://127.0.0.1:8000</span>
+<span class="p">$</span> omnirag serve --kb notes</code></pre>
+          </div>
+        </div>
+      </section>
+
+      <section class="section alt" aria-labelledby="why">
+        <div class="wrap">
+          <p class="eyebrow">Is it a fit?</p>
+          <h2 id="why">What OmniRAG is, and what it is not</h2>
+          <div class="fit">
+            <div class="fit-col">
+              <h3>A good fit when you want</h3>
+              <ul>
+                <li>One assistant over mixed material: docs, a code base, CSV exports, diagrams and meeting transcripts.</li>
+                <li>To see where every sentence came from, down to lines, rows or timestamps.</li>
+                <li>To keep data on your own machine or server, with no model required.</li>
+                <li>A small code base you can read and change: retrieval is plain Python and numpy.</li>
+                <li>One install for the CLI, an HTTP API, a web app and a Python library.</li>
+              </ul>
+            </div>
+            <div class="fit-col">
+              <h3>Not a fit (yet) when you need</h3>
+              <ul>
+                <li>Millions of chunks: search is exact brute force, without an approximate index.</li>
+                <li>OCR for scanned PDFs, or image-to-image search.</li>
+                <li>User accounts, permissions per document, or chat history shared across devices.</li>
+                <li>Web crawling or connectors to SaaS tools; ingestion reads local files and uploads.</li>
+              </ul>
+              <a class="text-link" href={`${repo}#roadmap`}>See the roadmap →</a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="faq">
+        <div class="wrap narrow">
+          <p class="eyebrow">FAQ</p>
+          <h2 id="faq">Questions</h2>
+          <div class="faq">
+            {
+              faqs.map((f) => (
+                <details>
+                  <summary>{f.q}</summary>
+                  <p>{f.a}</p>
+                </details>
+              ))
+            }
+          </div>
+          <p class="more">More in <a href={link("docs/troubleshooting/")}>Troubleshooting and FAQ</a>.</p>
+        </div>
+      </section>
+
+      <section class="final">
+        <div class="wrap final-inner">
+          <h2>Point it at a folder and ask.</h2>
+          <div class="cta">
+            <a class="btn primary" href={link("docs/quickstart/")}>Read the quickstart</a>
+            <a class="btn" href={`${repo}/releases`}>Download a release</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="wrap footer-inner">
+        <div class="brand small">
+          <img src={logo} alt="" width="22" height="22" />
+          <span>OmniRAG</span>
+        </div>
+        <nav aria-label="Footer">
+          <a href={link("docs/")}>Docs</a>
+          <a href={link("docs/reference/cli/")}>CLI</a>
+          <a href={link("docs/reference/http-api/")}>HTTP API</a>
+          <a href={link("docs/changelog/")}>Changelog</a>
+          <a href={repo}>GitHub</a>
+          <a href={`${repo}/releases`}>Releases</a>
+          <a href={`${repo}/blob/main/LICENSE`}>MIT License</a>
+        </nav>
+      </div>
+    </footer>
+  </body>
+</html>
+
+<style is:global>
+  :root {
+    --bg: #fcfcfd;
+    --bg-alt: #f5f6f9;
+    --fg: #16171d;
+    --muted: #5a5d6c;
+    --border: #e4e5ec;
+    --card: #ffffff;
+    --brand: #4f46e5;
+    --brand-soft: #eef0ff;
+    --term: #14151b;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121318;
+      --bg-alt: #17181f;
+      --fg: #eceef4;
+      --muted: #a6a9b8;
+      --border: #2a2c36;
+      --card: #1b1c24;
+      --brand: #8b8ff8;
+      --brand-soft: #23244a;
+      --term: #0d0e12;
+    }
+  }
+  * {
+    box-sizing: border-box;
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+  }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-feature-settings: "cv11", "ss01";
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  a {
+    color: inherit;
+  }
+  :focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  code,
+  pre {
+    font-family: "JetBrains Mono Variable", ui-monospace, Menlo, Consolas, monospace;
+    font-variant-ligatures: none;
+  }
+  .skip {
+    position: absolute;
+    left: -9999px;
+  }
+  .skip:focus {
+    left: 1rem;
+    top: 1rem;
+    z-index: 10;
+    background: var(--card);
+    padding: 0.5rem 0.75rem;
+    border-radius: 8px;
+  }
+  .wrap {
+    width: min(1120px, 100% - 2rem);
+    margin-inline: auto;
+  }
+  .wrap.narrow {
+    width: min(760px, 100% - 2rem);
+  }
+  .nav {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    border-bottom: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
+    backdrop-filter: blur(12px);
+  }
+  .nav-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 60px;
+  }
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    text-decoration: none;
+  }
+  .brand.small {
+    font-size: 0.95rem;
+  }
+  .nav nav {
+    display: flex;
+    gap: 0.25rem;
+  }
+  .nav nav a {
+    text-decoration: none;
+    color: var(--muted);
+    font-size: 0.92rem;
+    padding: 0.4rem 0.7rem;
+    border-radius: 8px;
+  }
+  .nav nav a:hover {
+    color: var(--fg);
+    background: var(--bg-alt);
+  }
+  .nav nav a.gh {
+    color: var(--fg);
+    border: 1px solid var(--border);
+  }
+  .eyebrow {
+    margin: 0 0 0.6rem;
+    color: var(--brand);
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+    margin: 0;
+  }
+  .hero {
+    padding: 5rem 0 3rem;
+    background:
+      radial-gradient(60rem 30rem at 50% -10%, color-mix(in srgb, var(--brand) 14%, transparent), transparent 70%),
+      var(--bg);
+  }
+  .hero-inner {
+    text-align: center;
+    max-width: 940px;
+  }
+  .hero h1 {
+    font-size: clamp(2rem, 4.2vw, 3.1rem);
+    font-weight: 700;
+    text-wrap: balance;
+  }
+  .lead {
+    color: var(--muted);
+    font-size: clamp(1rem, 1.6vw, 1.15rem);
+    max-width: 680px;
+    margin: 1.25rem auto 0;
+    text-wrap: pretty;
+  }
+  .cta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    justify-content: center;
+    margin-top: 2rem;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    height: 2.75rem;
+    padding: 0 1.15rem;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    font-weight: 550;
+    font-size: 0.95rem;
+    text-decoration: none;
+    transition:
+      transform 120ms ease,
+      box-shadow 120ms ease;
+  }
+  .btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px -8px rgb(0 0 0 / 0.25);
+  }
+  .btn.primary {
+    background: var(--fg);
+    color: var(--bg);
+    border-color: var(--fg);
+  }
+  .install {
+    margin: 1.5rem auto 0;
+    display: inline-block;
+    max-width: 100%;
+    overflow-x: auto;
+    padding: 0.6rem 1rem;
+    border-radius: 10px;
+    border: 1px dashed var(--border);
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  .shot-wrap {
+    margin-top: 3.5rem;
+  }
+  .frame {
+    margin: 0;
+    border-radius: 16px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    box-shadow:
+      0 30px 80px -30px rgb(30 27 75 / 0.35),
+      0 2px 6px rgb(0 0 0 / 0.04);
+    overflow: hidden;
+  }
+  .frame-bar {
+    display: flex;
+    gap: 6px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .frame-bar span {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--border);
+  }
+  .frame img {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+  .only-dark {
+    display: none !important;
+  }
+  @media (prefers-color-scheme: dark) {
+    .only-light {
+      display: none !important;
+    }
+    .only-dark {
+      display: block !important;
+    }
+  }
+  .caption {
+    text-align: center;
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-top: 0.9rem;
+  }
+  .section {
+    padding: 5.5rem 0;
+  }
+  .section.alt {
+    background: var(--bg-alt);
+    border-block: 1px solid var(--border);
+  }
+  .section h2 {
+    font-size: clamp(1.6rem, 3vw, 2.3rem);
+    font-weight: 680;
+    text-wrap: balance;
+  }
+  .sub {
+    color: var(--muted);
+    max-width: 640px;
+    margin: 0.9rem 0 0;
+  }
+  .steps {
+    list-style: none;
+    padding: 0;
+    margin: 2.75rem 0 0;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+    counter-reset: none;
+  }
+  .step {
+    position: relative;
+    padding: 1.4rem;
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    background: var(--card);
+  }
+  .step-n {
+    font-family: "JetBrains Mono Variable", monospace;
+    font-size: 0.8rem;
+    color: var(--brand);
+  }
+  .step h3 {
+    font-size: 1.15rem;
+    margin: 0.5rem 0 0.5rem;
+  }
+  .step p,
+  .card p,
+  .mod p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.93rem;
+  }
+  .grid {
+    margin-top: 2.5rem;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+  }
+  .card {
+    padding: 1.35rem;
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    background: var(--card);
+  }
+  .card h3 {
+    font-size: 1rem;
+    margin-bottom: 0.5rem;
+  }
+  .tour {
+    margin-top: 2.5rem;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.5rem;
+  }
+  .tour figure {
+    margin: 0;
+  }
+  .tour img {
+    width: 100%;
+    height: auto;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    display: block;
+  }
+  .tour figcaption {
+    margin-top: 0.7rem;
+    color: var(--muted);
+    font-size: 0.92rem;
+  }
+  .tour figcaption strong {
+    color: var(--fg);
+  }
+  .mobile-row {
+    margin-top: 3rem;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 2.5rem;
+    align-items: center;
+  }
+  .phone {
+    width: 260px;
+    height: auto;
+    border-radius: 28px;
+    border: 6px solid var(--fg);
+    display: block;
+  }
+  .mobile-row h3 {
+    font-size: 1.4rem;
+    margin-bottom: 0.75rem;
+  }
+  .mobile-row p {
+    color: var(--muted);
+    max-width: 520px;
+  }
+  .text-link {
+    color: var(--brand);
+    font-weight: 550;
+    text-decoration: none;
+  }
+  .text-link:hover {
+    text-decoration: underline;
+  }
+  .mods {
+    margin-top: 2.5rem;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+    gap: 1rem;
+  }
+  .mod {
+    padding: 1.25rem;
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    border-top: 3px solid var(--accent);
+  }
+  .mod h3 {
+    font-size: 1.05rem;
+  }
+  .mod .exts {
+    font-family: "JetBrains Mono Variable", monospace;
+    font-size: 0.74rem;
+    color: var(--fg);
+    margin: 0.5rem 0 0.75rem;
+    word-spacing: 0.2em;
+  }
+  .mod-sky {
+    --accent: #0ea5e9;
+  }
+  .mod-violet {
+    --accent: #8b5cf6;
+  }
+  .mod-emerald {
+    --accent: #10b981;
+  }
+  .mod-amber {
+    --accent: #f59e0b;
+  }
+  .mod-rose {
+    --accent: #f43f5e;
+  }
+  .qs {
+    display: grid;
+    grid-template-columns: 1fr 1.25fr;
+    gap: 3rem;
+    align-items: center;
+  }
+  .qs .btn {
+    margin-top: 1.5rem;
+  }
+  .term {
+    border-radius: 14px;
+    background: var(--term);
+    color: #e5e7f0;
+    border: 1px solid #2a2c36;
+    overflow-x: auto;
+  }
+  .term pre {
+    margin: 0;
+    padding: 1.4rem 1.5rem;
+    font-size: 0.86rem;
+    line-height: 1.7;
+  }
+  .term .c {
+    color: #8b90a6;
+  }
+  .term .p {
+    color: #a5b4fc;
+    user-select: none;
+  }
+  .fit {
+    margin-top: 2.5rem;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.25rem;
+  }
+  .fit-col {
+    padding: 1.6rem;
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    background: var(--card);
+  }
+  .fit-col h3 {
+    font-size: 1.05rem;
+    margin-bottom: 0.75rem;
+  }
+  .fit-col ul {
+    margin: 0 0 1rem;
+    padding-left: 1.2rem;
+    color: var(--muted);
+  }
+  .fit-col li + li {
+    margin-top: 0.45rem;
+  }
+  .faq {
+    margin-top: 2rem;
+    border-top: 1px solid var(--border);
+  }
+  .faq details {
+    border-bottom: 1px solid var(--border);
+    padding: 1rem 0.25rem;
+  }
+  .faq summary {
+    cursor: pointer;
+    font-weight: 600;
+    list-style: none;
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+  .faq summary::-webkit-details-marker {
+    display: none;
+  }
+  .faq summary::after {
+    content: "+";
+    color: var(--muted);
+    font-weight: 400;
+  }
+  .faq details[open] summary::after {
+    content: "−";
+  }
+  .faq details p {
+    color: var(--muted);
+    margin: 0.6rem 0 0;
+  }
+  .more {
+    color: var(--muted);
+    margin-top: 1.5rem;
+  }
+  .more a {
+    color: var(--brand);
+  }
+  .final {
+    padding: 5rem 0;
+    text-align: center;
+    background: radial-gradient(40rem 20rem at 50% 100%, color-mix(in srgb, var(--brand) 14%, transparent), transparent 70%);
+  }
+  .final h2 {
+    font-size: clamp(1.6rem, 3vw, 2.3rem);
+  }
+  .footer {
+    border-top: 1px solid var(--border);
+    padding: 2rem 0;
+  }
+  .footer-inner {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+  }
+  .footer nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.25rem;
+  }
+  .footer nav a {
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 0.9rem;
+  }
+  .footer nav a:hover {
+    color: var(--fg);
+  }
+  @media (max-width: 980px) {
+    .steps,
+    .grid {
+      grid-template-columns: repeat(2, 1fr);
+    }
+    .qs,
+    .fit {
+      grid-template-columns: 1fr;
+    }
+  }
+  @media (max-width: 640px) {
+    .hero {
+      padding-top: 3rem;
+    }
+    .steps,
+    .grid,
+    .tour {
+      grid-template-columns: 1fr;
+    }
+    .mobile-row {
+      grid-template-columns: 1fr;
+      justify-items: center;
+      text-align: center;
+    }
+    .phone {
+      width: 220px;
+    }
+    .hide-sm {
+      display: none;
+    }
+    .section {
+      padding: 4rem 0;
+    }
+  }
+</style>

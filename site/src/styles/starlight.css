@@ -1,0 +1,25 @@
+:root {
+  --sl-font: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --sl-font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+  --sl-color-accent-low: #1e1b4b;
+  --sl-color-accent: #6366f1;
+  --sl-color-accent-high: #c7d2fe;
+}
+:root[data-theme="light"] {
+  --sl-color-accent-low: #e0e7ff;
+  --sl-color-accent: #4f46e5;
+  --sl-color-accent-high: #312e81;
+}
+.sl-markdown-content img {
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 0.75rem;
+}
+/* The imported CHANGELOG.md and CONTRIBUTING.md bring their own title and intro. */
+.changelog > h1:first-child,
+.changelog > h1:first-child + p,
+.contributing > h1:first-child {
+  display: none;
+}
+code, pre {
+  font-variant-ligatures: none;
+}

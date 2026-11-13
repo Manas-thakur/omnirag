@@ -13,3 +13,8 @@ examples/.data
 dist
 build
 plans
+node_modules
+**/node_modules
+web
+site
+docs

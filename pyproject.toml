@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "omnirag"
-version = "0.2.0"
+version = "0.3.0"
 description = "Multi-modal RAG knowledge assistant built from scratch (no LangChain, no LlamaIndex)."
 readme = "README.md"
 license = "MIT"

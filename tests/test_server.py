@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -50,7 +51,7 @@ def test_index_page_and_health(client):
     page = client.get("/")
     assert page.status_code == 200
     assert "OmniRAG" in page.text
-    assert '<meta name="omnirag-default-kb" content="demo">' in page.text
+    assert 'name="omnirag-default-kb" content="demo"' in page.text
     assert "__VERSION__" not in page.text
     assert "script-src 'self'" in page.headers["content-security-policy"]
     assert page.headers["x-content-type-options"] == "nosniff"
@@ -58,11 +59,23 @@ def test_index_page_and_health(client):
     assert health["status"] == "ok" and health["auth_required"] is False
 
 
+def built_assets(page: str) -> list[str]:
+    """The hashed script and stylesheet paths the built index.html references."""
+    return re.findall(r'(?:src|href)="(/static/assets/[^"]+\.(?:js|css))"', page)
+
+
 def test_static_assets_and_traversal(client):
-    for asset in ("app.js", "app.css", "markdown.js", "favicon.svg"):
+    for asset in ("favicon.svg", "theme-init.js"):
         r = client.get(f"/static/{asset}")
         assert r.status_code == 200, asset
         assert r.headers["cache-control"] == "no-cache"
+    assets = built_assets(client.get("/").text)
+    assert any(a.endswith(".js") for a in assets) and any(a.endswith(".css") for a in assets)
+    for asset in assets:
+        r = client.get(asset)
+        assert r.status_code == 200, asset
+        assert "immutable" in r.headers["cache-control"]
+    assert "fonts.googleapis.com" not in client.get("/").headers["content-security-policy"]
     for path in ("/static/../app.py", "/static/%2e%2e/app.py", "/static/..%2fapp.py"):
         r = client.get(path)
         assert r.status_code == 404 or "create_app" not in r.text, path
@@ -444,7 +457,8 @@ def test_api_key_auth(tmp_path):
         health = client.get("/api/health")
         assert health.status_code == 200 and health.json()["auth_required"] is True
         assert client.get("/").status_code == 200
-        assert client.get("/static/app.js").status_code == 200
+        page = client.get("/").text
+        assert all(client.get(a).status_code == 200 for a in built_assets(page))
         denied = client.get("/api/kbs")
         assert denied.status_code == 401
         assert denied.json()["detail"] == "missing or invalid API key"

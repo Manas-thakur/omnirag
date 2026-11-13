@@ -6,25 +6,45 @@ All notable changes to OmniRAG are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-13
+
 ### Added
 
-- **Answer page redesign** in the web app: each question heads its own block with Answer,
-  Sources and Media tabs, a strip of source cards above the answer (cited first), citation
-  pills that show the source's file name with a hover/focus preview, progress steps while
-  streaming that collapse into a one-line summary, and "Related" follow-up questions. The
-  empty chat is a home screen with a large composer and starter questions.
+- **New web app** built with Vite, React 19, TypeScript, Tailwind CSS v4 and shadcn/ui, using
+  the shadcn AI Elements patterns (Chat with Message Scroller, Message, Prompt Input, Sources,
+  Inline Citation, Suggestion, Chain of Thought on Trace, Context, Code Block). Sources live in
+  `web/`; the production build is committed to `src/omnirag/server/static/`, so `pip install`
+  still needs no Node.js. It keeps every 0.2 feature and adds:
+  - answers whose question heads each block, with Answer, Sources and Media tabs, a strip of
+    source cards above the text (cited first), citation pills that name the source with a
+    hover/focus preview, and section-labelled pills when one file is cited;
+  - progress steps while streaming (searching, reading, writing) that collapse into a
+    one-line, expandable summary, and offline "Related" follow-up questions;
+  - a home screen with a large composer and starter questions;
+  - syntax-highlighted code (answers and source previews, with real line numbers);
+  - a context meter that estimates how much source text went to the answerer;
+  - a Radix-based sidebar, sheets and bottom drawers on phones, a `Ctrl K` / `⌘ K` command
+    palette, toasts with undo, skeleton loading states and a shortcuts dialog.
 - **Scoped chats**: tick documents in a Sources panel or in the library to restrict answers to
   them; `POST /api/query` and `/api/query/stream` accept `doc_ids`.
 - `POST /api/kbs/{name}/related`: follow-up and starter questions phrased offline from section
   headings, code symbols, table titles and transcript timestamps.
-- `Ctrl K` / `⌘ K` command palette, a keyboard shortcuts sheet (`?`) and single-key shortcuts.
-- `docs/design/references.md`: the design references and what was adopted from each.
+- Self-hosted Inter and JetBrains Mono fonts; the page makes no third-party requests.
+- **Documentation site and landing page** (Astro + Starlight, `site/`), published to GitHub
+  Pages by `.github/workflows/pages.yml`. The CLI reference is generated from the CLI by
+  `scripts/gen_cli_docs.py`.
+- CI job for the web app (type check, ESLint, Vitest, build, and a check that the committed
+  build is current); the release workflow builds the web app before the Python package.
+- `CONTRIBUTING.md`, and `docs/design/references.md` updated with the component kit choice.
 
 ### Changed
 
-- Calmer visual system: one accent colour, hairline borders, a 4/8px spacing scale, a serif
-  reading face for answers, and motion of 200ms or less that respects reduced-motion settings.
-  Source previews and the Sources panel become bottom sheets on phones.
+- Static assets under `/static/assets/` have content-hashed names and are cached for a year;
+  the page and other static files are still revalidated on every load.
+- The page's Content Security Policy no longer allows Google Fonts, and allows inline
+  `style` attributes and elements (used by the UI libraries); scripts remain same-origin only.
+- `omnirag query --help` shows "[n] citations" (the brackets were swallowed by the terminal
+  markup).
 
 ## [0.2.0] - 2026-11-13
 
@@ -96,5 +116,6 @@ Untagged initial version.
   named knowledge bases with incremental indexing, the `omnirag` CLI, a FastAPI
   server with a single-page web UI, Docker image and CI.
 
-[Unreleased]: https://github.com/Manas-thakur/omnirag/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Manas-thakur/omnirag/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Manas-thakur/omnirag/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Manas-thakur/omnirag/releases/tag/v0.2.0
