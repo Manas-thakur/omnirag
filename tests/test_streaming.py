@@ -9,9 +9,8 @@ import pytest
 
 from omnirag.generate import AnswerGenerator, LLMError, OllamaLLM, OpenAICompatibleLLM
 from omnirag.generate.llm import LLM
-from omnirag.index.knowledge_base import KBPreferences
+from omnirag.index.knowledge_base import INDEX_VERSION, KBPreferences
 from omnirag.store.models import Chunk, Modality, ScoredChunk
-from omnirag.textutil import TEXT_VERSION
 
 
 def sc(cid: str, content: str) -> ScoredChunk:
@@ -200,10 +199,10 @@ def test_kb_preferences_roundtrip_and_llm(demo_kb):
     assert demo_kb.preferences == KBPreferences()
 
 
-def test_old_kbs_are_reembedded_after_stemmer_upgrade(manager, corpus):
+def test_old_kbs_are_reembedded_after_index_upgrade(manager, corpus):
     kb = manager.create("legacy")
     kb.ingest([corpus / "docs"])
-    assert kb.config.text_version == TEXT_VERSION
+    assert kb.config.text_version == INDEX_VERSION
     kb.config.text_version = 1
     kb.config.save(kb.path / "kb.json")
     kb.close()
@@ -212,8 +211,8 @@ def test_old_kbs_are_reembedded_after_stemmer_upgrade(manager, corpus):
     assert reopened.config.text_version == 1
     hits = reopened.search("when do refresh tokens expire", k=2)
     assert hits.results
-    assert reopened.config.text_version == TEXT_VERSION
+    assert reopened.config.text_version == INDEX_VERSION
     assert reopened.ensure_current() is False
     reopened.close()
     with manager.get("legacy") as again:
-        assert again.config.text_version == TEXT_VERSION
+        assert again.config.text_version == INDEX_VERSION

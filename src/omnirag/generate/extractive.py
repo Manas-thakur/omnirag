@@ -54,6 +54,46 @@ def _code_sentences(src: Source) -> list[str]:
     return sentences + [s for line in other for s in split_sentences(line)]
 
 
+_TABLE_RULE_RE = re.compile(r"^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?$")
+_LINK_ONLY_RE = re.compile(r"!?\[(?:[^\[\]]|\[[^\]]*\])*\]\([^)]*\)")
+
+
+def _is_nav_line(line: str) -> bool:
+    """Badge rows and link lists ("[Docs](..) · [Releases](..)") carry no prose."""
+    if "](" not in line:
+        return False
+    rest = _LINK_ONLY_RE.sub("", line)
+    return not re.sub(r"[\s·•|*_,/>-]+", "", rest)
+
+
+def _table_row_sentence(line: str) -> str | None:
+    """``| **Mute 24h** | Hides the incident |`` -> ``Mute 24h: Hides the incident``."""
+    if _TABLE_RULE_RE.match(line.strip()):
+        return None
+    cells = [c.strip().strip("*`").strip() for c in line.strip().strip("|").split("|")]
+    cells = [c for c in cells if c]
+    if len(cells) < 2:
+        return cells[0] if cells else None
+    return f"{cells[0]}: " + "; ".join(cells[1:])
+
+
+def _prose_lines(content: str) -> str:
+    out = []
+    for line in content.splitlines():
+        stripped = line.strip()
+        if _is_nav_line(stripped):
+            continue
+        # Whole rows, and rows cut in half at a chunk boundary ("... text |").
+        if stripped.count("|") >= 2 or stripped.startswith("|") or stripped.endswith("|"):
+            sentence = _table_row_sentence(stripped)
+            if sentence:
+                # Its own paragraph so the sentence splitter keeps rows apart.
+                out.extend(["", sentence.rstrip(".") + ".", ""])
+            continue
+        out.append(line)
+    return "\n".join(out)
+
+
 def _candidate_sentences(src: Source) -> list[str]:
     if src.modality == "code":
         return _code_sentences(src)
@@ -61,6 +101,8 @@ def _candidate_sentences(src: Source) -> list[str]:
     heading = str(src.metadata.get("heading", ""))
     if heading and content.startswith(heading):
         content = content[len(heading) :].lstrip()
+    if src.modality == "text":
+        content = _prose_lines(content)
     content = _MD_IMAGE_RE.sub(lambda m: m.group(1), content)
     content = _MD_LINK_RE.sub(lambda m: m.group(1), content)
     content = content.replace("**", "")

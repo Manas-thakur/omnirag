@@ -17,12 +17,16 @@ from omnirag.generate.llm import LLM
 from omnirag.ingest import IngestContext, IngestError, IngestionPipeline
 from omnirag.query.rewriter import QueryRewriter
 from omnirag.retrieve import HybridRetriever, RetrievalResult
+from omnirag.retrieve.context import CONTEXT_VERSION, index_text
 from omnirag.store import Chunk, Document, LocalStore, SearchFilters
 from omnirag.store.local import utcnow
 from omnirag.textutil import TEXT_VERSION
 
 # Bump when ingestion output changes in a way that should invalidate old chunks.
-INGEST_VERSION = "1"
+INGEST_VERSION = "2"
+# Version of everything the stored vectors depend on: tokenisation and the
+# contextual header chunks are indexed with.
+INDEX_VERSION = TEXT_VERSION * 100 + CONTEXT_VERSION
 
 ProgressFn = Callable[[str, Path, str], None]
 
@@ -175,7 +179,7 @@ class KnowledgeBase:
             raise FileNotFoundError(f"no knowledge base at {self.path}")
         self.config = KBConfig.load(config_path)
         self.store = LocalStore(self.path / "store.sqlite")
-        if self.config.text_version != TEXT_VERSION and not self.store.count_chunks():
+        if self.config.text_version != INDEX_VERSION and not self.store.count_chunks():
             self._mark_text_version()
         self._cache: EmbeddingCache | None = None
         self._embedder: Embedder | None = None
@@ -232,20 +236,21 @@ class KnowledgeBase:
 
     # ---------------------------------------------------------- maintenance
     def _mark_text_version(self) -> None:
-        self.config.text_version = TEXT_VERSION
+        self.config.text_version = INDEX_VERSION
         self.config.save(self.path / "kb.json")
 
     def ensure_current(self) -> bool:
-        """Re-embed stored chunks if they were built with an older tokeniser.
+        """Re-embed stored chunks built with an older index format.
 
-        Only the hashing embedder depends on OmniRAG's own tokenisation; neural
-        embedders are unaffected, so for them only the version is updated.
-        Returns True when a rebuild happened.
+        The stored vectors depend on OmniRAG's tokenisation (hashing embedder)
+        and on the contextual header every chunk is embedded with (all
+        embedders), so a knowledge base from an older version is re-embedded
+        once. Returns True when a rebuild happened.
         """
-        if self.config.text_version == TEXT_VERSION:
+        if self.config.text_version == INDEX_VERSION:
             return False
         rebuilt = False
-        if self.config.embedder.startswith("hashing") and self.store.count_chunks():
+        if self.store.count_chunks():
             self.rebuild()
             rebuilt = True
         self._mark_text_version()
@@ -338,7 +343,9 @@ class KnowledgeBase:
                 )
             )
         if chunks:
-            vectors = self.embedder.embed_documents([c.content for c in chunks])
+            vectors = self.embedder.embed_documents(
+                [index_text(c.content, c.metadata) for c in chunks]
+            )
             for chunk, vec in zip(chunks, vectors, strict=True):
                 chunk.embedding = vec
         doc = Document(
@@ -383,7 +390,9 @@ class KnowledgeBase:
         batch = 256
         for i in range(0, len(chunks), batch):
             part = chunks[i : i + batch]
-            embedded = self.embedder.embed_documents([c.content for c in part])
+            embedded = self.embedder.embed_documents(
+                [index_text(c.content, c.metadata) for c in part]
+            )
             for c, v in zip(part, embedded, strict=True):
                 vectors[c.chunk_id] = v
         dim = int(next(iter(vectors.values())).shape[0])
@@ -546,5 +555,5 @@ def new_config(name: str, description: str, embedder: str, settings: Settings) -
         chunk_size=settings.chunk_size,
         chunk_overlap=settings.chunk_overlap,
         created_at=utcnow(),
-        text_version=TEXT_VERSION,
+        text_version=INDEX_VERSION,
     )

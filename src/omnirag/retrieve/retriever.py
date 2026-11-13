@@ -11,6 +11,7 @@ from omnirag.query.parser import ParsedQuery, QueryParser
 from omnirag.query.rewriter import QueryRewriter
 from omnirag.query.router import ModalityRouter, RetrievalPlan
 from omnirag.retrieve.bm25 import BM25Index
+from omnirag.retrieve.context import index_text
 from omnirag.retrieve.fusion import reciprocal_rank_fusion
 from omnirag.retrieve.rerank import LexicalReranker, mmr
 from omnirag.store.local import LocalStore
@@ -57,10 +58,37 @@ class HybridRetriever:
             rev = self.store.revision
             if self._bm25 is None or self._bm25_revision != rev:
                 self._bm25 = BM25Index().build(
-                    (c.chunk_id, c.content) for c in self.store.all_chunks()
+                    (c.chunk_id, index_text(c.content, c.metadata)) for c in self.store.all_chunks()
                 )
                 self._bm25_revision = rev
             return self._bm25
+
+    # A query word found in more than this share of chunks (for example the
+    # product name in a knowledge base about that product) says little about
+    # which chunk answers the question; it is left out of the dense query.
+    COMMON_TERM_SHARE = 0.2
+    MIN_CHUNKS_FOR_DF = 20
+
+    def _discriminative(self, text: str) -> str:
+        index = self.bm25()
+        n = len(index)
+        if n < self.MIN_CHUNKS_FOR_DF:
+            return text
+        words = text.split()
+        keep, dropped = [], False
+        for word in words:
+            toks = index.analyzer(word)
+            # Judge the word by its full form: the analyzer also emits CamelCase
+            # parts ("AnomalyGuard" -> anomal, guard, anomalyguard).
+            full = max(toks, key=len) if toks else ""
+            common = bool(full) and (len(index.postings.get(full, ())) / n > self.COMMON_TERM_SHARE)
+            if common:
+                dropped = True
+            else:
+                keep.append(word)
+        if not dropped or not index.analyzer(" ".join(keep)):
+            return text  # never strip the query down to nothing meaningful
+        return " ".join(keep)
 
     def retrieve(
         self,
@@ -85,7 +113,7 @@ class HybridRetriever:
         bm25_scores: dict[str, float] = {}
 
         if mode in ("hybrid", "dense"):
-            dense_texts = [text]
+            dense_texts = [self._discriminative(text)]
             if use_hyde:
                 hypo = self.rewriter.hyde(text)
                 if hypo:
@@ -125,7 +153,8 @@ class HybridRetriever:
                 info["bm25_score"] = round(bm25_scores[cid], 4)
             candidates.append(ScoredChunk(chunk, score, info))
 
-        ranked = self.reranker.rerank(text, candidates, parsed.phrases, plan.boosts)
+        idf = self.bm25().idf if mode != "dense" or len(self.bm25()) else None
+        ranked = self.reranker.rerank(text, candidates, parsed.phrases, plan.boosts, idf=idf)
         pool = ranked[: max(plan.k * 3, 10)]
         embeddings = {}
         for cand in pool:

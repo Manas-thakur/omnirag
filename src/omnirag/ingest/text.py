@@ -19,6 +19,25 @@ from omnirag.store.models import Modality
 
 _MD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(\s*<?([^)\s>]+)>?(?:\s+\"([^\"]*)\")?\s*\)")
 _FRONT_MATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.DOTALL)
+# MDX: ES module lines and JSX components are code, not prose.
+_MDX_IMPORT_RE = re.compile(r"^\s*(import|export)\s.+$", re.MULTILINE)
+_MDX_COMPONENT_RE = re.compile(r"<([A-Z][\w.]*)\b([^<>]*?)/?>(?:\s*</\1>)?", re.DOTALL)
+_MDX_CLOSING_RE = re.compile(r"</[A-Z][\w.]*>")
+_JSX_ATTR_RE = re.compile(r"\b(?:alt|title|caption|label)=\"([^\"]+)\"")
+
+
+def _clean_mdx(text: str) -> str:
+    """Drop MDX imports and JSX component tags, keeping any alt/title text."""
+    text = _MDX_IMPORT_RE.sub("", text)
+
+    def component(m: re.Match) -> str:
+        described = [a for a in _JSX_ATTR_RE.findall(m.group(2)) if a.strip()]
+        return " ".join(described)
+
+    text = _MDX_COMPONENT_RE.sub(component, text)
+    return _MDX_CLOSING_RE.sub("", text)
+
+
 _RST_UNDERLINE_RE = re.compile(r"^([=\-~^\"'`#*+])\1{2,}\s*$")
 
 
@@ -161,6 +180,13 @@ class TextIngestor(Ingestor):
                         if key in {"title", "author", "date", "tags", "description"}:
                             meta[key] = value.strip().strip("\"'")
                 text = text[fm.end() :]
+            if ext == ".mdx":
+                text = _clean_mdx(text)
+            # Docs generators (Starlight, Docusaurus, ...) keep the page title in
+            # front matter only; make it the top heading so every chunk's
+            # breadcrumb says which page it came from.
+            if meta.get("title") and not _first_heading(text):
+                text = f"# {meta['title']}\n\n{text.lstrip()}"
         title = title or str(meta.get("title") or "") or _first_heading(text)
         title = title or humanize_filename(path).title()
         if ext in {".txt", ".text", ".log"}:
